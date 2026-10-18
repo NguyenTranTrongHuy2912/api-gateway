@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package chat;
+
+option java_package = "iuh.fit.grpc.chat";
+option java_multiple_files = true;
+
+service ChatService {
+  rpc SendMessage (ChatMessage) returns (ChatResponse);
+}
+
+message ChatMessage {
+  string message_id = 1;
+  string room_id = 2;
+  string sender_id = 3;
+  string content = 4;
+  int64 timestamp = 5;
+}
+
+message ChatResponse {
+  string message_id = 1;
+  bool is_success = 2;
+  string status_message = 3;
+  int64 timestamp = 4;
+}
