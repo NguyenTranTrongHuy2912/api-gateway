@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import grpc
 import time
@@ -10,6 +11,14 @@ import chat_pb2_grpc
 app = FastAPI(
     title="FastAPI gRPC Gateway",
     description="API Gateway làm cầu nối giữa Mobile Client và Java gRPC Backend"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],        # Cho phép tất cả các Origin (bao gồm localhost:8081)
+    allow_credentials=True,
+    allow_methods=["*"],        # Cho phép tất cả HTTP Methods (GET, POST, OPTIONS...)
+    allow_headers=["*"],        # Cho phép tất cả Headers
 )
 
 # Địa chỉ và Port của Java gRPC Server
