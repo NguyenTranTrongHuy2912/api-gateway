@@ -22,6 +22,14 @@ class SendMessageRequest(BaseModel):
     sender_id: str
     content: str
 
+@app.get("/")
+async def root():
+    return {
+        "system": "FastAPI gRPC Gateway",
+        "status": "Running",
+        "docs_url": "http://127.0.0.1:8000/docs"
+    }
+
 @app.post("/api/v1/chat/send")
 async def send_message(payload: SendMessageRequest):
     # 1. Khởi tạo kênh kết nối gRPC bất đồng bộ tới Java Server
