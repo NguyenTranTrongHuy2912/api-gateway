@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nchat.proto\x12\x04\x63hat\"i\n\x0b\x43hatMessage\x12\x12\n\nmessage_id\x18\x01 \x01(\t\x12\x0f\n\x07room_id\x18\x02 \x01(\t\x12\x11\n\tsender_id\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\x12\x11\n\ttimestamp\x18\x05 \x01(\x03\"a\n\x0c\x43hatResponse\x12\x12\n\nmessage_id\x18\x01 \x01(\t\x12\x12\n\nis_success\x18\x02 \x01(\x08\x12\x16\n\x0estatus_message\x18\x03 \x01(\t\x12\x11\n\ttimestamp\x18\x04 \x01(\x03\x32\x43\n\x0b\x43hatService\x12\x34\n\x0bSendMessage\x12\x11.chat.ChatMessage\x1a\x12.chat.ChatResponseB\x15\n\x11iuh.fit.grpc.chatP\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nchat.proto\x12\x04\x63hat\"i\n\x0b\x43hatMessage\x12\x12\n\nmessage_id\x18\x01 \x01(\t\x12\x0f\n\x07room_id\x18\x02 \x01(\t\x12\x11\n\tsender_id\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\x12\x11\n\ttimestamp\x18\x05 \x01(\x03\"a\n\x0c\x43hatResponse\x12\x12\n\nmessage_id\x18\x01 \x01(\t\x12\x12\n\nis_success\x18\x02 \x01(\x08\x12\x16\n\x0estatus_message\x18\x03 \x01(\t\x12\x11\n\ttimestamp\x18\x04 \x01(\x03\"J\n\x0eHistoryRequest\x12\x0f\n\x07room_id\x18\x01 \x01(\t\x12\r\n\x05limit\x18\x02 \x01(\x05\x12\x18\n\x10\x62\x65\x66ore_timestamp\x18\x03 \x01(\x03\"H\n\x0fHistoryResponse\x12#\n\x08messages\x18\x01 \x03(\x0b\x32\x11.chat.ChatMessage\x12\x10\n\x08has_more\x18\x02 \x01(\x08\x32\x85\x01\n\x0b\x43hatService\x12\x34\n\x0bSendMessage\x12\x11.chat.ChatMessage\x1a\x12.chat.ChatResponse\x12@\n\x11GetMessageHistory\x12\x14.chat.HistoryRequest\x1a\x15.chat.HistoryResponseB\x15\n\x11iuh.fit.grpc.chatP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -36,6 +36,10 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_CHATMESSAGE']._serialized_end=125
   _globals['_CHATRESPONSE']._serialized_start=127
   _globals['_CHATRESPONSE']._serialized_end=224
-  _globals['_CHATSERVICE']._serialized_start=226
-  _globals['_CHATSERVICE']._serialized_end=293
+  _globals['_HISTORYREQUEST']._serialized_start=226
+  _globals['_HISTORYREQUEST']._serialized_end=300
+  _globals['_HISTORYRESPONSE']._serialized_start=302
+  _globals['_HISTORYRESPONSE']._serialized_end=374
+  _globals['_CHATSERVICE']._serialized_start=377
+  _globals['_CHATSERVICE']._serialized_end=510
 # @@protoc_insertion_point(module_scope)

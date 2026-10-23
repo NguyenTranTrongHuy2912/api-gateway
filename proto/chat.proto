@@ -7,6 +7,7 @@ option java_multiple_files = true;
 
 service ChatService {
   rpc SendMessage (ChatMessage) returns (ChatResponse);
+  rpc GetMessageHistory (HistoryRequest) returns (HistoryResponse);
 }
 
 message ChatMessage {
@@ -22,4 +23,15 @@ message ChatResponse {
   bool is_success = 2;
   string status_message = 3;
   int64 timestamp = 4;
+}
+
+message HistoryRequest {
+  string room_id = 1;
+  int32 limit = 2;             // mặc định 50, tối đa 100
+  int64 before_timestamp = 3;  // 0 = lấy tin mới nhất
+}
+
+message HistoryResponse {
+  repeated ChatMessage messages = 1;  // mới nhất trước
+  bool has_more = 2;
 }
