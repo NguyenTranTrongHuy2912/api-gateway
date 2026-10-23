@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import grpc
@@ -68,6 +68,40 @@ async def send_message(payload: SendMessageRequest):
         except grpc.RpcError as e:
             raise HTTPException(
                 status_code=500, 
+                detail=f"Không thể kết nối tới Java gRPC Backend: {e.details()}"
+            )
+
+@app.get("/api/v1/chat/{room_id}/messages")
+async def get_history(
+    room_id: str,
+    limit: int = Query(50, ge=1, le=100),
+    before: int = Query(0, ge=0, description="timestamp (ms) của tin cũ nhất đang hiển thị"),
+):
+    async with grpc.aio.insecure_channel(f"{JAVA_GRPC_HOST}:{JAVA_GRPC_PORT}") as channel:
+        stub = chat_pb2_grpc.ChatServiceStub(channel)
+        grpc_request = chat_pb2.HistoryRequest(
+            room_id=room_id,
+            limit=limit,
+            before_timestamp=before,
+        )
+        try:
+            grpc_response = await stub.GetMessageHistory(grpc_request)
+            return {
+                "messages": [
+                    {
+                        "message_id": m.message_id,
+                        "room_id": m.room_id,
+                        "sender_id": m.sender_id,
+                        "content": m.content,
+                        "timestamp": m.timestamp,
+                    }
+                    for m in grpc_response.messages
+                ],
+                "has_more": grpc_response.has_more,
+            }
+        except grpc.RpcError as e:
+            raise HTTPException(
+                status_code=500,
                 detail=f"Không thể kết nối tới Java gRPC Backend: {e.details()}"
             )
 
