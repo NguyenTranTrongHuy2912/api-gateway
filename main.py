@@ -31,20 +31,26 @@ HTTP_BY_GRPC = {
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
 }
 
+DETAIL_BY_STATUS = {
+    401: "Unauthenticated",
+    403: "Forbidden",
+    404: "Not found",
+    409: "Conflict",
+    429: "Too many requests",
+    503: "Chat backend is unavailable",
+    504: "Chat backend timed out",
+}
+
 
 def to_http_error(e: grpc.RpcError) -> HTTPException:
     code = e.code()
     status = HTTP_BY_GRPC.get(code, 500)
-    log.warning("gRPC call failed: %s - %s", code, e.details())  # full detail only in the log
+    log.warning("gRPC call failed: %s - %s", code, e.details())
 
     if status == 400:
-        detail = e.details() or "Invalid request"  # backend validation message is safe to show
-    elif status == 503:
-        detail = "Chat backend is unavailable"
-    elif status == 504:
-        detail = "Chat backend timed out"
+        detail = e.details() or "Invalid request"
     else:
-        detail = "Internal gateway error"
+        detail = DETAIL_BY_STATUS.get(status, "Internal gateway error")
     return HTTPException(status_code=status, detail=detail)
 
 
