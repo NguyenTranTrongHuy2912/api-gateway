@@ -1,0 +1,13 @@
+{
+  "0": "main.py",
+  "1": "chat_pb2_grpc.py",
+  "2": "ChatServiceServicer",
+  "3": "get_history",
+  "4": "send_message",
+  "5": "ChatServiceStub",
+  "6": "AuthServiceServicer",
+  "7": "AuthService",
+  "8": "register",
+  "9": "ChatService",
+  "10": "to_http_error"
+}

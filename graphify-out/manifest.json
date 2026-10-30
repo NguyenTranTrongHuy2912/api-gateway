@@ -1,20 +1,32 @@
 {
   "chat_pb2.py": {
-    "mtime": 1792769829.3183863,
-    "seen": 1793365647.277421,
-    "ast_hash": "eab7ace7b6e036de7a1b8630904d2e47",
-    "semantic_hash": "eab7ace7b6e036de7a1b8630904d2e47"
+    "mtime": 1793366699.7703416,
+    "seen": 1793366765.2902741,
+    "ast_hash": "c5085967b795ddef106a2d168a784455",
+    "semantic_hash": ""
   },
   "chat_pb2_grpc.py": {
-    "mtime": 1792769829.3183863,
-    "seen": 1793365647.2774258,
-    "ast_hash": "458ddac2a3dfe6db2b3003c0a9858bc2",
-    "semantic_hash": "458ddac2a3dfe6db2b3003c0a9858bc2"
+    "mtime": 1793366699.7703416,
+    "seen": 1793366765.2902799,
+    "ast_hash": "816a278fa24993764b27c661886289c3",
+    "semantic_hash": ""
   },
   "main.py": {
-    "mtime": 1793033124.483892,
-    "seen": 1793365647.2774282,
-    "ast_hash": "c3db83a7b86d94702ca5e21aaf70c927",
-    "semantic_hash": "c3db83a7b86d94702ca5e21aaf70c927"
+    "mtime": 1793367052.8025248,
+    "seen": 1793367069.6471877,
+    "ast_hash": "2da168f7d68a26ebef59f3b4bfb8deea",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1793032166.2983918,
+    "seen": 1793366765.290286,
+    "ast_hash": "e478989f8449fcc0e34ab2315f7c26f2",
+    "semantic_hash": ""
+  },
+  "requirements.txt": {
+    "mtime": 1792343340.7148292,
+    "seen": 1793366765.2902884,
+    "ast_hash": "0b798a70a2cc48f0d9603107ac3d0114",
+    "semantic_hash": ""
   }
 }
