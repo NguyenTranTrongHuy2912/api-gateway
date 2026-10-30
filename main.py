@@ -18,7 +18,7 @@ log = logging.getLogger("gateway")
 
 # Backend address and per-call timeout, configurable without touching code
 JAVA_GRPC_TARGET = os.getenv("JAVA_GRPC_TARGET", "localhost:50051")
-GRPC_TIMEOUT = float(os.getenv("GRPC_TIMEOUT", "5"))  # seconds
+GRPC_TIMEOUT = float(os.getenv("GRPC_TIMEOUT", "15.0"))  # seconds
 
 # gRPC status code -> HTTP status code (anything not listed becomes 500)
 HTTP_BY_GRPC = {
