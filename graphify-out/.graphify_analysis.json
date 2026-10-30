@@ -1,0 +1,134 @@
+{
+  "communities": {
+    "0": [
+      "contextlib",
+      "fastapi",
+      "fastapi_middleware_cors",
+      "logging",
+      "main",
+      "main_lifespan",
+      "os",
+      "pydantic",
+      "typing",
+      "uvicorn"
+    ],
+    "1": [
+      "chat_pb2",
+      "chat_pb2_grpc",
+      "chat_pb2_grpc_add_chatserviceservicer_to_server",
+      "google_protobuf",
+      "google_protobuf_internal",
+      "grpc",
+      "grpc_utilities",
+      "warnings"
+    ],
+    "2": [
+      "chat_pb2_grpc_chatservice",
+      "chat_pb2_grpc_chatservice_getmessagehistory",
+      "chat_pb2_grpc_chatservice_sendmessage",
+      "chat_pb2_grpc_chatserviceservicer",
+      "chat_pb2_grpc_chatserviceservicer_getmessagehistory",
+      "chat_pb2_grpc_chatserviceservicer_sendmessage",
+      "chat_pb2_grpc_rationale_29"
+    ],
+    "3": [
+      "get",
+      "httpexception",
+      "main_get_history",
+      "main_root",
+      "main_to_http_error",
+      "request",
+      "rpcerror"
+    ],
+    "4": [
+      "basemodel",
+      "main_send_message",
+      "main_sendmessagerequest",
+      "post",
+      "time",
+      "uuid"
+    ],
+    "5": [
+      "chat_pb2_grpc_chatservicestub",
+      "chat_pb2_grpc_chatservicestub_init",
+      "chat_pb2_grpc_rationale_32"
+    ]
+  },
+  "cohesion": {
+    "0": 0.2222222222222222,
+    "1": 0.2857142857142857,
+    "2": 0.38095238095238093,
+    "3": 0.2857142857142857,
+    "4": 0.3333333333333333,
+    "5": 0.6666666666666666
+  },
+  "gods": [
+    {
+      "id": "main_send_message",
+      "label": "send_message()",
+      "degree": 7
+    },
+    {
+      "id": "chat_pb2_grpc_rationale_29",
+      "label": "Missing associated documentation comment in .proto file.",
+      "degree": 5
+    },
+    {
+      "id": "main_to_http_error",
+      "label": "to_http_error()",
+      "degree": 5
+    },
+    {
+      "id": "chat_pb2_grpc_chatservicestub",
+      "label": "ChatServiceStub",
+      "degree": 4
+    },
+    {
+      "id": "chat_pb2_grpc_chatserviceservicer",
+      "label": "ChatServiceServicer",
+      "degree": 4
+    },
+    {
+      "id": "chat_pb2_grpc_chatservice",
+      "label": "ChatService",
+      "degree": 4
+    },
+    {
+      "id": "main_get_history",
+      "label": "get_history()",
+      "degree": 4
+    },
+    {
+      "id": "main_lifespan",
+      "label": "lifespan()",
+      "degree": 3
+    },
+    {
+      "id": "main_sendmessagerequest",
+      "label": "SendMessageRequest",
+      "degree": 3
+    },
+    {
+      "id": "chat_pb2_grpc_add_chatserviceservicer_to_server",
+      "label": "add_ChatServiceServicer_to_server()",
+      "degree": 2
+    }
+  ],
+  "surprises": [
+    {
+      "source": "lifespan()",
+      "target": "ChatServiceStub",
+      "source_files": [
+        "main.py",
+        "chat_pb2_grpc.py"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "why": "bridges separate communities"
+    }
+  ],
+  "tokens": {
+    "input": 0,
+    "output": 0
+  }
+}
