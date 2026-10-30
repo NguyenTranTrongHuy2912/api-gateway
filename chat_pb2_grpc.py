@@ -138,3 +138,161 @@ class ChatService:
             timeout,
             metadata,
             _registered_method=True)
+
+
+class AuthServiceStub:
+    """Missing associated documentation comment in .proto file."""
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.RequestOtp = channel.unary_unary(
+                '/chat.AuthService/RequestOtp',
+                request_serializer=chat__pb2.RequestOtpRequest.SerializeToString,
+                response_deserializer=chat__pb2.RequestOtpResponse.FromString,
+                _registered_method=True)
+        self.Register = channel.unary_unary(
+                '/chat.AuthService/Register',
+                request_serializer=chat__pb2.RegisterRequest.SerializeToString,
+                response_deserializer=chat__pb2.AuthResponse.FromString,
+                _registered_method=True)
+        self.Login = channel.unary_unary(
+                '/chat.AuthService/Login',
+                request_serializer=chat__pb2.LoginRequest.SerializeToString,
+                response_deserializer=chat__pb2.AuthResponse.FromString,
+                _registered_method=True)
+
+
+class AuthServiceServicer:
+    """Missing associated documentation comment in .proto file."""
+
+    def RequestOtp(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Register(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Login(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+
+def add_AuthServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+            'RequestOtp': grpc.unary_unary_rpc_method_handler(
+                    servicer.RequestOtp,
+                    request_deserializer=chat__pb2.RequestOtpRequest.FromString,
+                    response_serializer=chat__pb2.RequestOtpResponse.SerializeToString,
+            ),
+            'Register': grpc.unary_unary_rpc_method_handler(
+                    servicer.Register,
+                    request_deserializer=chat__pb2.RegisterRequest.FromString,
+                    response_serializer=chat__pb2.AuthResponse.SerializeToString,
+            ),
+            'Login': grpc.unary_unary_rpc_method_handler(
+                    servicer.Login,
+                    request_deserializer=chat__pb2.LoginRequest.FromString,
+                    response_serializer=chat__pb2.AuthResponse.SerializeToString,
+            ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+            'chat.AuthService', rpc_method_handlers)
+    server.add_generic_rpc_handlers((generic_handler,))
+    server.add_registered_method_handlers('chat.AuthService', rpc_method_handlers)
+
+
+ # This class is part of an EXPERIMENTAL API.
+class AuthService:
+    """Missing associated documentation comment in .proto file."""
+
+    @staticmethod
+    def RequestOtp(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/RequestOtp',
+            chat__pb2.RequestOtpRequest.SerializeToString,
+            chat__pb2.RequestOtpResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Register(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/Register',
+            chat__pb2.RegisterRequest.SerializeToString,
+            chat__pb2.AuthResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Login(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/Login',
+            chat__pb2.LoginRequest.SerializeToString,
+            chat__pb2.AuthResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)

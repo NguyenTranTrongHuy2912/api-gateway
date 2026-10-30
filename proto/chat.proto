@@ -35,3 +35,35 @@ message HistoryResponse {
   repeated ChatMessage messages = 1;  // mới nhất trước
   bool has_more = 2;
 }
+
+service AuthService {
+  rpc RequestOtp (RequestOtpRequest) returns (RequestOtpResponse);
+  rpc Register (RegisterRequest) returns (AuthResponse);
+  rpc Login (LoginRequest) returns (AuthResponse);
+}
+
+message RequestOtpRequest {
+  string account = 1;          // email
+}
+
+message RequestOtpResponse {
+  int32 expires_in_seconds = 1;
+  int32 resend_after_seconds = 2;
+}
+
+message RegisterRequest {
+  string account = 1;          // email
+  string password = 2;
+  string display_name = 3;
+  string otp_code = 4;
+}
+
+message LoginRequest {
+  string account = 1;          // email
+  string password = 2;
+}
+
+message AuthResponse {
+  string user_id = 1;
+  string display_name = 2;
+}
