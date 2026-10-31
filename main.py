@@ -3,7 +3,7 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Annotated, Literal, Optional
 
 import grpc
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -40,6 +40,16 @@ DETAIL_BY_STATUS = {
     429: "Too many requests",
     503: "Chat backend is unavailable",
     504: "Chat backend timed out",
+}
+
+# Proto enum <-> the short names used in the REST API
+ROOM_TYPE_TO_API = {
+    chat_pb2.ROOM_TYPE_DIRECT: "DIRECT",
+    chat_pb2.ROOM_TYPE_GROUP: "GROUP",
+}
+ROOM_TYPE_FROM_API = {
+    "DIRECT": chat_pb2.ROOM_TYPE_DIRECT,
+    "GROUP": chat_pb2.ROOM_TYPE_GROUP,
 }
 
 
@@ -84,6 +94,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 class SendMessageRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -115,6 +126,43 @@ class LoginBody(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class CreateRoomBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    type: Literal["DIRECT", "GROUP"]
+    # Only used for GROUP; the backend validates length and required-ness
+    name: str = Field(default="", max_length=50)
+    # Other people in the room; the creator (from the token) is added by the backend
+    member_ids: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
+        min_length=1, max_length=99
+    )
+
+
+class MarkReadBody(BaseModel):
+    # 0 = mark everything currently in the room as read
+    read_up_to_timestamp: int = Field(default=0, ge=0)
+
+
+def room_to_dict(room: chat_pb2.Room) -> dict:
+    return {
+        "room_id": room.room_id,
+        "type": ROOM_TYPE_TO_API.get(room.type, "UNKNOWN"),
+        "name": room.name,
+        "member_ids": list(room.member_ids),
+        # None when the room has no messages yet
+        "last_message": (
+            {
+                "content": room.last_message_content,
+                "sender_id": room.last_message_sender_id,
+                "timestamp": room.last_message_timestamp,
+            }
+            if room.last_message_timestamp > 0
+            else None
+        ),
+        "unread_count": room.unread_count,
+    }
+
+
 @app.get("/")
 async def root():
     return {
@@ -122,6 +170,9 @@ async def root():
         "status": "Running",
         "docs_url": "/docs",
     }
+
+
+# ------------------------------------------------------------------- Auth
 
 
 @app.post("/api/v1/auth/request-otp")
@@ -175,6 +226,97 @@ async def login(payload: LoginBody, request: Request):
     }
 
 
+# ------------------------------------------------------------------ Users
+
+
+@app.get("/api/v1/users/search")
+async def search_users(
+    request: Request,
+    q: str = Query(..., min_length=2, max_length=100),
+    limit: int = Query(10, ge=1, le=20),
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.stub.SearchUsers(
+            chat_pb2.SearchUsersRequest(requester_id=user_id, query=q, limit=limit),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+
+    return {
+        "users": [
+            {"user_id": u.user_id, "display_name": u.display_name, "email": u.email}
+            for u in resp.users
+        ]
+    }
+
+
+# ------------------------------------------------------------------ Rooms
+
+
+@app.get("/api/v1/rooms")
+async def list_rooms(
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.stub.ListRooms(
+            chat_pb2.ListRoomsRequest(user_id=user_id), timeout=GRPC_TIMEOUT
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+
+    return {"rooms": [room_to_dict(r) for r in resp.rooms]}
+
+
+@app.post("/api/v1/rooms")
+async def create_room(
+    payload: CreateRoomBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.stub.CreateRoom(
+            chat_pb2.CreateRoomRequest(
+                creator_id=user_id,  # from the token, never from the client
+                type=ROOM_TYPE_FROM_API[payload.type],
+                name=payload.name,
+                member_ids=payload.member_ids,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+
+    return room_to_dict(resp)
+
+
+@app.post("/api/v1/rooms/{room_id}/read")
+async def mark_room_read(
+    room_id: str,
+    request: Request,
+    payload: Optional[MarkReadBody] = None,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        await request.app.state.stub.MarkRoomRead(
+            chat_pb2.MarkRoomReadRequest(
+                user_id=user_id,
+                room_id=room_id,
+                read_up_to_timestamp=payload.read_up_to_timestamp if payload else 0,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------- Chat
+
+
 @app.post("/api/v1/chat/send")
 async def send_message(
     payload: SendMessageRequest,
@@ -213,6 +355,7 @@ async def get_history(
         room_id=room_id,
         limit=limit,
         before_timestamp=before_timestamp,
+        user_id=user_id,  # backend checks this user belongs to the room
     )
     try:
         resp = await request.app.state.stub.GetMessageHistory(grpc_request, timeout=GRPC_TIMEOUT)
