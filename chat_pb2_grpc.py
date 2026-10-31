@@ -44,6 +44,26 @@ class ChatServiceStub:
                 request_serializer=chat__pb2.HistoryRequest.SerializeToString,
                 response_deserializer=chat__pb2.HistoryResponse.FromString,
                 _registered_method=True)
+        self.SearchUsers = channel.unary_unary(
+                '/chat.ChatService/SearchUsers',
+                request_serializer=chat__pb2.SearchUsersRequest.SerializeToString,
+                response_deserializer=chat__pb2.SearchUsersResponse.FromString,
+                _registered_method=True)
+        self.CreateRoom = channel.unary_unary(
+                '/chat.ChatService/CreateRoom',
+                request_serializer=chat__pb2.CreateRoomRequest.SerializeToString,
+                response_deserializer=chat__pb2.Room.FromString,
+                _registered_method=True)
+        self.ListRooms = channel.unary_unary(
+                '/chat.ChatService/ListRooms',
+                request_serializer=chat__pb2.ListRoomsRequest.SerializeToString,
+                response_deserializer=chat__pb2.ListRoomsResponse.FromString,
+                _registered_method=True)
+        self.MarkRoomRead = channel.unary_unary(
+                '/chat.ChatService/MarkRoomRead',
+                request_serializer=chat__pb2.MarkRoomReadRequest.SerializeToString,
+                response_deserializer=chat__pb2.MarkRoomReadResponse.FromString,
+                _registered_method=True)
 
 
 class ChatServiceServicer:
@@ -61,6 +81,31 @@ class ChatServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SearchUsers(self, request, context):
+        """--- Phòng chat ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateRoom(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListRooms(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def MarkRoomRead(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ChatServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -73,6 +118,26 @@ def add_ChatServiceServicer_to_server(servicer, server):
                     servicer.GetMessageHistory,
                     request_deserializer=chat__pb2.HistoryRequest.FromString,
                     response_serializer=chat__pb2.HistoryResponse.SerializeToString,
+            ),
+            'SearchUsers': grpc.unary_unary_rpc_method_handler(
+                    servicer.SearchUsers,
+                    request_deserializer=chat__pb2.SearchUsersRequest.FromString,
+                    response_serializer=chat__pb2.SearchUsersResponse.SerializeToString,
+            ),
+            'CreateRoom': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateRoom,
+                    request_deserializer=chat__pb2.CreateRoomRequest.FromString,
+                    response_serializer=chat__pb2.Room.SerializeToString,
+            ),
+            'ListRooms': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListRooms,
+                    request_deserializer=chat__pb2.ListRoomsRequest.FromString,
+                    response_serializer=chat__pb2.ListRoomsResponse.SerializeToString,
+            ),
+            'MarkRoomRead': grpc.unary_unary_rpc_method_handler(
+                    servicer.MarkRoomRead,
+                    request_deserializer=chat__pb2.MarkRoomReadRequest.FromString,
+                    response_serializer=chat__pb2.MarkRoomReadResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -139,9 +204,119 @@ class ChatService:
             metadata,
             _registered_method=True)
 
+    @staticmethod
+    def SearchUsers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/SearchUsers',
+            chat__pb2.SearchUsersRequest.SerializeToString,
+            chat__pb2.SearchUsersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateRoom(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/CreateRoom',
+            chat__pb2.CreateRoomRequest.SerializeToString,
+            chat__pb2.Room.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListRooms(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/ListRooms',
+            chat__pb2.ListRoomsRequest.SerializeToString,
+            chat__pb2.ListRoomsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def MarkRoomRead(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/MarkRoomRead',
+            chat__pb2.MarkRoomReadRequest.SerializeToString,
+            chat__pb2.MarkRoomReadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
 
 class AuthServiceStub:
-    """Missing associated documentation comment in .proto file."""
+    """---------------------------------------------------------------------- Auth
+
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -167,7 +342,9 @@ class AuthServiceStub:
 
 
 class AuthServiceServicer:
-    """Missing associated documentation comment in .proto file."""
+    """---------------------------------------------------------------------- Auth
+
+    """
 
     def RequestOtp(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -214,7 +391,9 @@ def add_AuthServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class AuthService:
-    """Missing associated documentation comment in .proto file."""
+    """---------------------------------------------------------------------- Auth
+
+    """
 
     @staticmethod
     def RequestOtp(request,

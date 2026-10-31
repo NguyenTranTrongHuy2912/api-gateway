@@ -8,6 +8,12 @@ option java_multiple_files = true;
 service ChatService {
   rpc SendMessage (ChatMessage) returns (ChatResponse);
   rpc GetMessageHistory (HistoryRequest) returns (HistoryResponse);
+
+  // --- Phòng chat ---
+  rpc SearchUsers (SearchUsersRequest) returns (SearchUsersResponse);
+  rpc CreateRoom (CreateRoomRequest) returns (Room);
+  rpc ListRooms (ListRoomsRequest) returns (ListRoomsResponse);
+  rpc MarkRoomRead (MarkRoomReadRequest) returns (MarkRoomReadResponse);
 }
 
 message ChatMessage {
@@ -29,12 +35,73 @@ message HistoryRequest {
   string room_id = 1;
   int32 limit = 2;             // mặc định 50, tối đa 100
   int64 before_timestamp = 3;  // 0 = lấy tin mới nhất
+  string user_id = 4;          // người đang xem; bắt buộc, phải là thành viên phòng
 }
 
 message HistoryResponse {
   repeated ChatMessage messages = 1;  // mới nhất trước
   bool has_more = 2;
 }
+
+// ---------------------------------------------------------------- Phòng chat
+
+enum RoomType {
+  ROOM_TYPE_UNSPECIFIED = 0;
+  ROOM_TYPE_DIRECT = 1;   // chat 1-1
+  ROOM_TYPE_GROUP = 2;    // chat nhóm
+}
+
+message Room {
+  string room_id = 1;
+  RoomType type = 2;
+  string name = 3;                    // DIRECT: tên người còn lại; GROUP: tên nhóm
+  repeated string member_ids = 4;
+  string last_message_content = 5;    // rỗng nếu chưa có tin
+  string last_message_sender_id = 6;
+  int64 last_message_timestamp = 7;   // 0 = chưa có tin
+  int64 unread_count = 8;             // tính theo người đang xem
+}
+
+message UserSummary {
+  string user_id = 1;
+  string display_name = 2;
+  string email = 3;
+}
+
+message SearchUsersRequest {
+  string requester_id = 1;   // loại chính người này khỏi kết quả
+  string query = 2;          // chứa '@' => tìm theo email (tiền tố); ngược lại tìm theo tên
+  int32 limit = 3;           // mặc định 10, tối đa 20
+}
+
+message SearchUsersResponse {
+  repeated UserSummary users = 1;
+}
+
+message CreateRoomRequest {
+  string creator_id = 1;
+  RoomType type = 2;
+  string name = 3;                   // chỉ dùng cho GROUP
+  repeated string member_ids = 4;    // không cần gồm creator_id
+}
+
+message ListRoomsRequest {
+  string user_id = 1;
+}
+
+message ListRoomsResponse {
+  repeated Room rooms = 1;           // hoạt động gần nhất trước
+}
+
+message MarkRoomReadRequest {
+  string user_id = 1;
+  string room_id = 2;
+  int64 read_up_to_timestamp = 3;    // 0 = đã đọc đến tin mới nhất hiện có
+}
+
+message MarkRoomReadResponse {}
+
+// ---------------------------------------------------------------------- Auth
 
 service AuthService {
   rpc RequestOtp (RequestOtpRequest) returns (RequestOtpResponse);
