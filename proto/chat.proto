@@ -51,6 +51,11 @@ enum RoomType {
   ROOM_TYPE_GROUP = 2;    // chat nhóm
 }
 
+message RoomMember {
+  string user_id = 1;
+  string display_name = 2;
+}
+
 message Room {
   string room_id = 1;
   RoomType type = 2;
@@ -60,6 +65,7 @@ message Room {
   string last_message_sender_id = 6;
   int64 last_message_timestamp = 7;   // 0 = chưa có tin
   int64 unread_count = 8;             // tính theo người đang xem
+  repeated RoomMember members = 9;    // để client hiện tên người gửi thay vì id
 }
 
 message UserSummary {
