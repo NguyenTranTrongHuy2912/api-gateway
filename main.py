@@ -149,6 +149,9 @@ def room_to_dict(room: chat_pb2.Room) -> dict:
         "type": ROOM_TYPE_TO_API.get(room.type, "UNKNOWN"),
         "name": room.name,
         "member_ids": list(room.member_ids),
+        "members": [
+            {"user_id": u.user_id, "display_name": u.display_name} for u in room.members
+        ],
         # None when the room has no messages yet
         "last_message": (
             {
@@ -380,4 +383,4 @@ async def get_history(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
