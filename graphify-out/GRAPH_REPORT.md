@@ -1,7 +1,7 @@
-# Graph Report - api-gateway  (2026-10-31)
+# Graph Report - api-gateway  (2026-11-01)
 
 ## Corpus Check
-- 5 files · ~2,542 words
+- 5 files · ~2,558 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 5 file(s) not represented in the graph (top: (none) 3, .example 1, .proto 1)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `28b4c2bc`
+- Built from commit: `43aea11f`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
