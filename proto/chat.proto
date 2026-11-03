@@ -113,10 +113,17 @@ service AuthService {
   rpc RequestOtp (RequestOtpRequest) returns (RequestOtpResponse);
   rpc Register (RegisterRequest) returns (AuthResponse);
   rpc Login (LoginRequest) returns (AuthResponse);
+  rpc ResetPassword (ResetPasswordRequest) returns (ResetPasswordResponse);
+}
+
+enum OtpPurpose {
+  OTP_PURPOSE_REGISTER = 0;         // mặc định: giữ nguyên hành vi đăng ký cũ
+  OTP_PURPOSE_RESET_PASSWORD = 1;
 }
 
 message RequestOtpRequest {
   string account = 1;          // email
+  OtpPurpose purpose = 2;
 }
 
 message RequestOtpResponse {
@@ -140,3 +147,11 @@ message AuthResponse {
   string user_id = 1;
   string display_name = 2;
 }
+
+message ResetPasswordRequest {
+  string account = 1;          // email
+  string otp_code = 2;
+  string new_password = 3;
+}
+
+message ResetPasswordResponse {}

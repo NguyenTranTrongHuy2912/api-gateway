@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nchat.proto\x12\x04\x63hat\"i\n\x0b\x43hatMessage\x12\x12\n\nmessage_id\x18\x01 \x01(\t\x12\x0f\n\x07room_id\x18\x02 \x01(\t\x12\x11\n\tsender_id\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\x12\x11\n\ttimestamp\x18\x05 \x01(\x03\"a\n\x0c\x43hatResponse\x12\x12\n\nmessage_id\x18\x01 \x01(\t\x12\x12\n\nis_success\x18\x02 \x01(\x08\x12\x16\n\x0estatus_message\x18\x03 \x01(\t\x12\x11\n\ttimestamp\x18\x04 \x01(\x03\"[\n\x0eHistoryRequest\x12\x0f\n\x07room_id\x18\x01 \x01(\t\x12\r\n\x05limit\x18\x02 \x01(\x05\x12\x18\n\x10\x62\x65\x66ore_timestamp\x18\x03 \x01(\x03\x12\x0f\n\x07user_id\x18\x04 \x01(\t\"H\n\x0fHistoryResponse\x12#\n\x08messages\x18\x01 \x03(\x0b\x32\x11.chat.ChatMessage\x12\x10\n\x08has_more\x18\x02 \x01(\x08\"3\n\nRoomMember\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x14\n\x0c\x64isplay_name\x18\x02 \x01(\t\"\xee\x01\n\x04Room\x12\x0f\n\x07room_id\x18\x01 \x01(\t\x12\x1c\n\x04type\x18\x02 \x01(\x0e\x32\x0e.chat.RoomType\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\x12\n\nmember_ids\x18\x04 \x03(\t\x12\x1c\n\x14last_message_content\x18\x05 \x01(\t\x12\x1e\n\x16last_message_sender_id\x18\x06 \x01(\t\x12\x1e\n\x16last_message_timestamp\x18\x07 \x01(\x03\x12\x14\n\x0cunread_count\x18\x08 \x01(\x03\x12!\n\x07members\x18\t \x03(\x0b\x32\x10.chat.RoomMember\"C\n\x0bUserSummary\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x14\n\x0c\x64isplay_name\x18\x02 \x01(\t\x12\r\n\x05\x65mail\x18\x03 \x01(\t\"H\n\x12SearchUsersRequest\x12\x14\n\x0crequester_id\x18\x01 \x01(\t\x12\r\n\x05query\x18\x02 \x01(\t\x12\r\n\x05limit\x18\x03 \x01(\x05\"7\n\x13SearchUsersResponse\x12 \n\x05users\x18\x01 \x03(\x0b\x32\x11.chat.UserSummary\"g\n\x11\x43reateRoomRequest\x12\x12\n\ncreator_id\x18\x01 \x01(\t\x12\x1c\n\x04type\x18\x02 \x01(\x0e\x32\x0e.chat.RoomType\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\x12\n\nmember_ids\x18\x04 \x03(\t\"#\n\x10ListRoomsRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\".\n\x11ListRoomsResponse\x12\x19\n\x05rooms\x18\x01 \x03(\x0b\x32\n.chat.Room\"U\n\x13MarkRoomReadRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0f\n\x07room_id\x18\x02 \x01(\t\x12\x1c\n\x14read_up_to_timestamp\x18\x03 \x01(\x03\"\x16\n\x14MarkRoomReadResponse\"$\n\x11RequestOtpRequest\x12\x0f\n\x07\x61\x63\x63ount\x18\x01 \x01(\t\"N\n\x12RequestOtpResponse\x12\x1a\n\x12\x65xpires_in_seconds\x18\x01 \x01(\x05\x12\x1c\n\x14resend_after_seconds\x18\x02 \x01(\x05\"\\\n\x0fRegisterRequest\x12\x0f\n\x07\x61\x63\x63ount\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t\x12\x14\n\x0c\x64isplay_name\x18\x03 \x01(\t\x12\x10\n\x08otp_code\x18\x04 \x01(\t\"1\n\x0cLoginRequest\x12\x0f\n\x07\x61\x63\x63ount\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t\"5\n\x0c\x41uthResponse\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x14\n\x0c\x64isplay_name\x18\x02 \x01(\t*P\n\x08RoomType\x12\x19\n\x15ROOM_TYPE_UNSPECIFIED\x10\x00\x12\x14\n\x10ROOM_TYPE_DIRECT\x10\x01\x12\x13\n\x0fROOM_TYPE_GROUP\x10\x02\x32\x81\x03\n\x0b\x43hatService\x12\x34\n\x0bSendMessage\x12\x11.chat.ChatMessage\x1a\x12.chat.ChatResponse\x12@\n\x11GetMessageHistory\x12\x14.chat.HistoryRequest\x1a\x15.chat.HistoryResponse\x12\x42\n\x0bSearchUsers\x12\x18.chat.SearchUsersRequest\x1a\x19.chat.SearchUsersResponse\x12\x31\n\nCreateRoom\x12\x17.chat.CreateRoomRequest\x1a\n.chat.Room\x12<\n\tListRooms\x12\x16.chat.ListRoomsRequest\x1a\x17.chat.ListRoomsResponse\x12\x45\n\x0cMarkRoomRead\x12\x19.chat.MarkRoomReadRequest\x1a\x1a.chat.MarkRoomReadResponse2\xb6\x01\n\x0b\x41uthService\x12?\n\nRequestOtp\x12\x17.chat.RequestOtpRequest\x1a\x18.chat.RequestOtpResponse\x12\x35\n\x08Register\x12\x15.chat.RegisterRequest\x1a\x12.chat.AuthResponse\x12/\n\x05Login\x12\x12.chat.LoginRequest\x1a\x12.chat.AuthResponseB\x15\n\x11iuh.fit.grpc.chatP\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\nchat.proto\x12\x04\x63hat\"i\n\x0b\x43hatMessage\x12\x12\n\nmessage_id\x18\x01 \x01(\t\x12\x0f\n\x07room_id\x18\x02 \x01(\t\x12\x11\n\tsender_id\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\x12\x11\n\ttimestamp\x18\x05 \x01(\x03\"a\n\x0c\x43hatResponse\x12\x12\n\nmessage_id\x18\x01 \x01(\t\x12\x12\n\nis_success\x18\x02 \x01(\x08\x12\x16\n\x0estatus_message\x18\x03 \x01(\t\x12\x11\n\ttimestamp\x18\x04 \x01(\x03\"[\n\x0eHistoryRequest\x12\x0f\n\x07room_id\x18\x01 \x01(\t\x12\r\n\x05limit\x18\x02 \x01(\x05\x12\x18\n\x10\x62\x65\x66ore_timestamp\x18\x03 \x01(\x03\x12\x0f\n\x07user_id\x18\x04 \x01(\t\"H\n\x0fHistoryResponse\x12#\n\x08messages\x18\x01 \x03(\x0b\x32\x11.chat.ChatMessage\x12\x10\n\x08has_more\x18\x02 \x01(\x08\"3\n\nRoomMember\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x14\n\x0c\x64isplay_name\x18\x02 \x01(\t\"\xee\x01\n\x04Room\x12\x0f\n\x07room_id\x18\x01 \x01(\t\x12\x1c\n\x04type\x18\x02 \x01(\x0e\x32\x0e.chat.RoomType\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\x12\n\nmember_ids\x18\x04 \x03(\t\x12\x1c\n\x14last_message_content\x18\x05 \x01(\t\x12\x1e\n\x16last_message_sender_id\x18\x06 \x01(\t\x12\x1e\n\x16last_message_timestamp\x18\x07 \x01(\x03\x12\x14\n\x0cunread_count\x18\x08 \x01(\x03\x12!\n\x07members\x18\t \x03(\x0b\x32\x10.chat.RoomMember\"C\n\x0bUserSummary\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x14\n\x0c\x64isplay_name\x18\x02 \x01(\t\x12\r\n\x05\x65mail\x18\x03 \x01(\t\"H\n\x12SearchUsersRequest\x12\x14\n\x0crequester_id\x18\x01 \x01(\t\x12\r\n\x05query\x18\x02 \x01(\t\x12\r\n\x05limit\x18\x03 \x01(\x05\"7\n\x13SearchUsersResponse\x12 \n\x05users\x18\x01 \x03(\x0b\x32\x11.chat.UserSummary\"g\n\x11\x43reateRoomRequest\x12\x12\n\ncreator_id\x18\x01 \x01(\t\x12\x1c\n\x04type\x18\x02 \x01(\x0e\x32\x0e.chat.RoomType\x12\x0c\n\x04name\x18\x03 \x01(\t\x12\x12\n\nmember_ids\x18\x04 \x03(\t\"#\n\x10ListRoomsRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\".\n\x11ListRoomsResponse\x12\x19\n\x05rooms\x18\x01 \x03(\x0b\x32\n.chat.Room\"U\n\x13MarkRoomReadRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0f\n\x07room_id\x18\x02 \x01(\t\x12\x1c\n\x14read_up_to_timestamp\x18\x03 \x01(\x03\"\x16\n\x14MarkRoomReadResponse\"G\n\x11RequestOtpRequest\x12\x0f\n\x07\x61\x63\x63ount\x18\x01 \x01(\t\x12!\n\x07purpose\x18\x02 \x01(\x0e\x32\x10.chat.OtpPurpose\"N\n\x12RequestOtpResponse\x12\x1a\n\x12\x65xpires_in_seconds\x18\x01 \x01(\x05\x12\x1c\n\x14resend_after_seconds\x18\x02 \x01(\x05\"\\\n\x0fRegisterRequest\x12\x0f\n\x07\x61\x63\x63ount\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t\x12\x14\n\x0c\x64isplay_name\x18\x03 \x01(\t\x12\x10\n\x08otp_code\x18\x04 \x01(\t\"1\n\x0cLoginRequest\x12\x0f\n\x07\x61\x63\x63ount\x18\x01 \x01(\t\x12\x10\n\x08password\x18\x02 \x01(\t\"5\n\x0c\x41uthResponse\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x14\n\x0c\x64isplay_name\x18\x02 \x01(\t\"O\n\x14ResetPasswordRequest\x12\x0f\n\x07\x61\x63\x63ount\x18\x01 \x01(\t\x12\x10\n\x08otp_code\x18\x02 \x01(\t\x12\x14\n\x0cnew_password\x18\x03 \x01(\t\"\x17\n\x15ResetPasswordResponse*P\n\x08RoomType\x12\x19\n\x15ROOM_TYPE_UNSPECIFIED\x10\x00\x12\x14\n\x10ROOM_TYPE_DIRECT\x10\x01\x12\x13\n\x0fROOM_TYPE_GROUP\x10\x02*F\n\nOtpPurpose\x12\x18\n\x14OTP_PURPOSE_REGISTER\x10\x00\x12\x1e\n\x1aOTP_PURPOSE_RESET_PASSWORD\x10\x01\x32\x81\x03\n\x0b\x43hatService\x12\x34\n\x0bSendMessage\x12\x11.chat.ChatMessage\x1a\x12.chat.ChatResponse\x12@\n\x11GetMessageHistory\x12\x14.chat.HistoryRequest\x1a\x15.chat.HistoryResponse\x12\x42\n\x0bSearchUsers\x12\x18.chat.SearchUsersRequest\x1a\x19.chat.SearchUsersResponse\x12\x31\n\nCreateRoom\x12\x17.chat.CreateRoomRequest\x1a\n.chat.Room\x12<\n\tListRooms\x12\x16.chat.ListRoomsRequest\x1a\x17.chat.ListRoomsResponse\x12\x45\n\x0cMarkRoomRead\x12\x19.chat.MarkRoomReadRequest\x1a\x1a.chat.MarkRoomReadResponse2\x80\x02\n\x0b\x41uthService\x12?\n\nRequestOtp\x12\x17.chat.RequestOtpRequest\x1a\x18.chat.RequestOtpResponse\x12\x35\n\x08Register\x12\x15.chat.RegisterRequest\x1a\x12.chat.AuthResponse\x12/\n\x05Login\x12\x12.chat.LoginRequest\x1a\x12.chat.AuthResponse\x12H\n\rResetPassword\x12\x1a.chat.ResetPasswordRequest\x1a\x1b.chat.ResetPasswordResponseB\x15\n\x11iuh.fit.grpc.chatP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,8 +32,10 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'chat_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\021iuh.fit.grpc.chatP\001'
-  _globals['_ROOMTYPE']._serialized_start=1506
-  _globals['_ROOMTYPE']._serialized_end=1586
+  _globals['_ROOMTYPE']._serialized_start=1647
+  _globals['_ROOMTYPE']._serialized_end=1727
+  _globals['_OTPPURPOSE']._serialized_start=1729
+  _globals['_OTPPURPOSE']._serialized_end=1799
   _globals['_CHATMESSAGE']._serialized_start=20
   _globals['_CHATMESSAGE']._serialized_end=125
   _globals['_CHATRESPONSE']._serialized_start=127
@@ -63,17 +65,21 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_MARKROOMREADRESPONSE']._serialized_start=1164
   _globals['_MARKROOMREADRESPONSE']._serialized_end=1186
   _globals['_REQUESTOTPREQUEST']._serialized_start=1188
-  _globals['_REQUESTOTPREQUEST']._serialized_end=1224
-  _globals['_REQUESTOTPRESPONSE']._serialized_start=1226
-  _globals['_REQUESTOTPRESPONSE']._serialized_end=1304
-  _globals['_REGISTERREQUEST']._serialized_start=1306
-  _globals['_REGISTERREQUEST']._serialized_end=1398
-  _globals['_LOGINREQUEST']._serialized_start=1400
-  _globals['_LOGINREQUEST']._serialized_end=1449
-  _globals['_AUTHRESPONSE']._serialized_start=1451
-  _globals['_AUTHRESPONSE']._serialized_end=1504
-  _globals['_CHATSERVICE']._serialized_start=1589
-  _globals['_CHATSERVICE']._serialized_end=1974
-  _globals['_AUTHSERVICE']._serialized_start=1977
-  _globals['_AUTHSERVICE']._serialized_end=2159
+  _globals['_REQUESTOTPREQUEST']._serialized_end=1259
+  _globals['_REQUESTOTPRESPONSE']._serialized_start=1261
+  _globals['_REQUESTOTPRESPONSE']._serialized_end=1339
+  _globals['_REGISTERREQUEST']._serialized_start=1341
+  _globals['_REGISTERREQUEST']._serialized_end=1433
+  _globals['_LOGINREQUEST']._serialized_start=1435
+  _globals['_LOGINREQUEST']._serialized_end=1484
+  _globals['_AUTHRESPONSE']._serialized_start=1486
+  _globals['_AUTHRESPONSE']._serialized_end=1539
+  _globals['_RESETPASSWORDREQUEST']._serialized_start=1541
+  _globals['_RESETPASSWORDREQUEST']._serialized_end=1620
+  _globals['_RESETPASSWORDRESPONSE']._serialized_start=1622
+  _globals['_RESETPASSWORDRESPONSE']._serialized_end=1645
+  _globals['_CHATSERVICE']._serialized_start=1802
+  _globals['_CHATSERVICE']._serialized_end=2187
+  _globals['_AUTHSERVICE']._serialized_start=2190
+  _globals['_AUTHSERVICE']._serialized_end=2446
 # @@protoc_insertion_point(module_scope)

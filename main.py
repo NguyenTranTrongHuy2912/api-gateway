@@ -110,6 +110,14 @@ class RequestOtpBody(BaseModel):
     account: str = Field(min_length=1, max_length=254)  # email
 
 
+class ResetPasswordBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    account: str = Field(min_length=1, max_length=254)  # email
+    otp_code: str = Field(min_length=1, max_length=10)
+    new_password: str = Field(min_length=6, max_length=64)
+
+
 class RegisterBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -190,6 +198,40 @@ async def request_otp(payload: RequestOtpBody, request: Request):
         "expires_in_seconds": resp.expires_in_seconds,
         "resend_after_seconds": resp.resend_after_seconds,
     }
+
+
+@app.post("/api/v1/auth/forgot-password")
+async def forgot_password(payload: RequestOtpBody, request: Request):
+    try:
+        resp = await request.app.state.auth_stub.RequestOtp(
+            chat_pb2.RequestOtpRequest(
+                account=payload.account,
+                purpose=chat_pb2.OTP_PURPOSE_RESET_PASSWORD,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+    return {
+        "expires_in_seconds": resp.expires_in_seconds,
+        "resend_after_seconds": resp.resend_after_seconds,
+    }
+
+
+@app.post("/api/v1/auth/reset-password")
+async def reset_password(payload: ResetPasswordBody, request: Request):
+    try:
+        await request.app.state.auth_stub.ResetPassword(
+            chat_pb2.ResetPasswordRequest(
+                account=payload.account,
+                otp_code=payload.otp_code,
+                new_password=payload.new_password,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+    return {"ok": True}
 
 
 @app.post("/api/v1/auth/register")
