@@ -14,6 +14,9 @@ service ChatService {
   rpc CreateRoom (CreateRoomRequest) returns (Room);
   rpc ListRooms (ListRoomsRequest) returns (ListRoomsResponse);
   rpc MarkRoomRead (MarkRoomReadRequest) returns (MarkRoomReadResponse);
+
+  // --- Realtime Streaming ---
+  rpc SubscribeEvents (StreamEventsRequest) returns (stream ChatEvent);
 }
 
 enum MessageType {
@@ -117,6 +120,27 @@ message MarkRoomReadRequest {
 }
 
 message MarkRoomReadResponse {}
+
+// ---------------------------------------------------------------- Realtime Streaming
+
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_NEW_MESSAGE = 1;
+  EVENT_ROOM_UPDATED = 2;
+  EVENT_READ_RECEIPT = 3;
+}
+
+message StreamEventsRequest {
+  string user_id = 1;
+}
+
+message ChatEvent {
+  EventType event_type = 1;
+  ChatMessage message = 2;
+  Room room = 3;
+  string user_id = 4;
+  int64 timestamp = 5;
+}
 
 // ---------------------------------------------------------------------- Auth
 

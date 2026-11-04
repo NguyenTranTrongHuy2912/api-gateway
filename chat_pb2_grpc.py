@@ -64,6 +64,11 @@ class ChatServiceStub:
                 request_serializer=chat__pb2.MarkRoomReadRequest.SerializeToString,
                 response_deserializer=chat__pb2.MarkRoomReadResponse.FromString,
                 _registered_method=True)
+        self.SubscribeEvents = channel.unary_stream(
+                '/chat.ChatService/SubscribeEvents',
+                request_serializer=chat__pb2.StreamEventsRequest.SerializeToString,
+                response_deserializer=chat__pb2.ChatEvent.FromString,
+                _registered_method=True)
 
 
 class ChatServiceServicer:
@@ -106,6 +111,13 @@ class ChatServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SubscribeEvents(self, request, context):
+        """--- Realtime Streaming ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ChatServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -138,6 +150,11 @@ def add_ChatServiceServicer_to_server(servicer, server):
                     servicer.MarkRoomRead,
                     request_deserializer=chat__pb2.MarkRoomReadRequest.FromString,
                     response_serializer=chat__pb2.MarkRoomReadResponse.SerializeToString,
+            ),
+            'SubscribeEvents': grpc.unary_stream_rpc_method_handler(
+                    servicer.SubscribeEvents,
+                    request_deserializer=chat__pb2.StreamEventsRequest.FromString,
+                    response_serializer=chat__pb2.ChatEvent.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -302,6 +319,33 @@ class ChatService:
             '/chat.ChatService/MarkRoomRead',
             chat__pb2.MarkRoomReadRequest.SerializeToString,
             chat__pb2.MarkRoomReadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubscribeEvents(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/chat.ChatService/SubscribeEvents',
+            chat__pb2.StreamEventsRequest.SerializeToString,
+            chat__pb2.ChatEvent.FromString,
             options,
             channel_credentials,
             insecure,

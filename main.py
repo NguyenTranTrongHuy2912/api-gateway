@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import os
@@ -8,13 +9,13 @@ from contextlib import asynccontextmanager
 from typing import Annotated, Literal, Optional
 
 import grpc
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import chat_pb2
 import chat_pb2_grpc
-from auth import create_token, get_current_user
+from auth import create_token, decode_token, get_current_user
 
 log = logging.getLogger("gateway")
 
@@ -497,6 +498,75 @@ async def get_history(
         ],
         "has_more": resp.has_more,
     }
+
+
+# ---------------------------------------------------------------- Realtime WebSocket
+
+
+@app.websocket("/api/v1/ws")
+async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
+    user_id = decode_token(token)
+    if not user_id:
+        log.warning("WebSocket rejected: missing or invalid token")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    await websocket.accept()
+    log.info("WebSocket client connected: user_id=%s", user_id)
+
+    grpc_req = chat_pb2.StreamEventsRequest(user_id=user_id)
+    stub = websocket.app.state.stub
+    stream = stub.SubscribeEvents(grpc_req)
+
+    async def forward_grpc_to_ws():
+        try:
+            async for event in stream:
+                event_type_name = "UNKNOWN"
+                if event.event_type == chat_pb2.EVENT_NEW_MESSAGE:
+                    event_type_name = "NEW_MESSAGE"
+                elif event.event_type == chat_pb2.EVENT_ROOM_UPDATED:
+                    event_type_name = "ROOM_UPDATED"
+                elif event.event_type == chat_pb2.EVENT_READ_RECEIPT:
+                    event_type_name = "READ_RECEIPT"
+
+                payload = {
+                    "type": event_type_name,
+                    "timestamp": event.timestamp,
+                }
+                if event.event_type == chat_pb2.EVENT_NEW_MESSAGE:
+                    payload["message"] = {
+                        "message_id": event.message.message_id,
+                        "room_id": event.message.room_id,
+                        "sender_id": event.message.sender_id,
+                        "content": event.message.content,
+                        "timestamp": event.message.timestamp,
+                        "type": MESSAGE_TYPE_TO_API.get(event.message.type, "TEXT"),
+                        "media_url": event.message.media_url,
+                        "media_width": event.message.media_width,
+                        "media_height": event.message.media_height,
+                    }
+                await websocket.send_json(payload)
+        except asyncio.CancelledError:
+            pass
+        except grpc.RpcError as e:
+            log.warning("gRPC stream error for user %s: %s", user_id, e)
+        except Exception as e:
+            log.debug("Stream exception for user %s: %s", user_id, e)
+
+    forward_task = asyncio.create_task(forward_grpc_to_ws())
+
+    try:
+        while True:
+            text = await websocket.receive_text()
+            if text == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        log.info("WebSocket disconnected: user_id=%s", user_id)
+    except Exception as e:
+        log.debug("WebSocket exception for user %s: %s", user_id, e)
+    finally:
+        forward_task.cancel()
+        stream.cancel()
 
 
 if __name__ == "__main__":

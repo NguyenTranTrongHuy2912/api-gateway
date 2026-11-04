@@ -29,3 +29,10 @@ def get_current_user(authorization: str = Header(default="")) -> str:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+def decode_token(token: str):
+    """Decodes a JWT and returns user_id, or None if invalid/expired."""
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])["sub"]
+    except Exception:
+        return None
