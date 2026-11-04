@@ -93,7 +93,7 @@ def to_http_error(e: grpc.RpcError, expose_details: bool = False) -> HTTPExcepti
 
     if status == 400:
         detail = e.details() or "Invalid request"
-    elif expose_details and status in (401, 409, 429):
+    elif expose_details and status in (401, 404, 409, 429):
         # Auth endpoints only: the backend wrote these messages for end users
         detail = e.details() or DETAIL_BY_STATUS.get(status, "Error")
     else:
@@ -208,6 +208,29 @@ class CreateRoomBody(BaseModel):
 class MarkReadBody(BaseModel):
     # 0 = mark everything currently in the room as read
     read_up_to_timestamp: int = Field(default=0, ge=0)
+
+
+class FriendRequestBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    receiver_id: str = Field(min_length=1, max_length=100)
+
+
+class RespondFriendRequestBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    request_id: str = Field(min_length=1, max_length=100)
+    accept: bool
+
+
+class UpdateProfileBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    display_name: Optional[str] = Field(default=None, max_length=50)
+    avatar_url: Optional[str] = Field(default=None, max_length=500)
+
+
+class ChangePasswordLoggedInBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=6, max_length=64)
 
 
 def room_to_dict(room: chat_pb2.Room) -> dict:
@@ -350,7 +373,7 @@ async def search_users(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
 
     return {
         "users": [
@@ -373,7 +396,7 @@ async def list_rooms(
             chat_pb2.ListRoomsRequest(user_id=user_id), timeout=GRPC_TIMEOUT
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
 
     return {"rooms": [room_to_dict(r) for r in resp.rooms]}
 
@@ -395,7 +418,7 @@ async def create_room(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
 
     return room_to_dict(resp)
 
@@ -417,7 +440,7 @@ async def mark_room_read(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
 
     return {"ok": True}
 
@@ -490,7 +513,7 @@ async def send_message(
     try:
         resp = await request.app.state.stub.SendMessage(grpc_request, timeout=GRPC_TIMEOUT)
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
 
     return {
         "message_id": resp.message_id,
@@ -517,7 +540,7 @@ async def get_history(
     try:
         resp = await request.app.state.stub.GetMessageHistory(grpc_request, timeout=GRPC_TIMEOUT)
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
 
     return {
         "messages": [
@@ -637,7 +660,7 @@ async def send_friend_request(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
     return {
         "ok": resp.is_success,
         "message": resp.status_message,
@@ -666,8 +689,7 @@ async def respond_friend_request(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
-    revoke_user_tokens(user_id)
+        raise to_http_error(e, expose_details=True)
     return {"ok": resp.is_success, "message": resp.status_message}
 
 
@@ -682,7 +704,7 @@ async def list_friends(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
     return {
         "friends": [
             {
@@ -707,7 +729,7 @@ async def list_friend_requests(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
     return {
         "requests": [
             {
@@ -741,7 +763,7 @@ async def update_profile(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
     return {
         "ok": resp.is_success,
         "display_name": resp.display_name,
@@ -765,7 +787,7 @@ async def change_password_logged_in(
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
-        raise to_http_error(e)
+        raise to_http_error(e, expose_details=True)
     revoke_user_tokens(user_id)
     return {"ok": resp.is_success, "message": resp.status_message}
 
