@@ -17,6 +17,12 @@ service ChatService {
 
   // --- Realtime Streaming ---
   rpc SubscribeEvents (StreamEventsRequest) returns (stream ChatEvent);
+
+  // --- Hệ thống kết bạn ---
+  rpc SendFriendRequest (SendFriendRequestReq) returns (SendFriendRequestResp);
+  rpc RespondFriendRequest (RespondFriendRequestReq) returns (RespondFriendRequestResp);
+  rpc ListFriends (ListFriendsReq) returns (ListFriendsResp);
+  rpc ListFriendRequests (ListFriendRequestsReq) returns (ListFriendRequestsResp);
 }
 
 enum MessageType {
@@ -86,6 +92,7 @@ message UserSummary {
   string user_id = 1;
   string display_name = 2;
   string email = 3;
+  string avatar_url = 4;
 }
 
 message SearchUsersRequest {
@@ -128,6 +135,8 @@ enum EventType {
   EVENT_NEW_MESSAGE = 1;
   EVENT_ROOM_UPDATED = 2;
   EVENT_READ_RECEIPT = 3;
+  EVENT_FRIEND_REQUEST = 4;
+  EVENT_FRIEND_ACCEPTED = 5;
 }
 
 message StreamEventsRequest {
@@ -140,15 +149,76 @@ message ChatEvent {
   Room room = 3;
   string user_id = 4;
   int64 timestamp = 5;
+  FriendRequestItem friend_request = 6;
 }
 
-// ---------------------------------------------------------------------- Auth
+// ---------------------------------------------------------------- Hệ thống kết bạn
+
+enum FriendRequestStatus {
+  FRIEND_REQUEST_PENDING = 0;
+  FRIEND_REQUEST_ACCEPTED = 1;
+  FRIEND_REQUEST_REJECTED = 2;
+}
+
+message FriendRequestItem {
+  string request_id = 1;
+  string sender_id = 2;
+  string sender_name = 3;
+  string sender_email = 4;
+  string receiver_id = 5;
+  int64 created_at = 6;
+  FriendRequestStatus status = 7;
+}
+
+message SendFriendRequestReq {
+  string sender_id = 1;
+  string receiver_id = 2;
+}
+
+message SendFriendRequestResp {
+  bool is_success = 1;
+  string status_message = 2;
+  FriendRequestItem request = 3;
+}
+
+message RespondFriendRequestReq {
+  string user_id = 1;
+  string request_id = 2;
+  bool accept = 3;
+}
+
+message RespondFriendRequestResp {
+  bool is_success = 1;
+  string status_message = 2;
+}
+
+message ListFriendsReq {
+  string user_id = 1;
+}
+
+message ListFriendsResp {
+  repeated UserSummary friends = 1;
+}
+
+message ListFriendRequestsReq {
+  string user_id = 1;
+}
+
+message ListFriendRequestsResp {
+  repeated FriendRequestItem requests = 1;
+}
+
+// ---------------------------------------------------------------------- Auth & Profile
 
 service AuthService {
   rpc RequestOtp (RequestOtpRequest) returns (RequestOtpResponse);
   rpc Register (RegisterRequest) returns (AuthResponse);
   rpc Login (LoginRequest) returns (AuthResponse);
   rpc ResetPassword (ResetPasswordRequest) returns (ResetPasswordResponse);
+
+  // --- Tab Cá nhân ---
+  rpc UpdateProfile (UpdateProfileRequest) returns (UpdateProfileResponse);
+  rpc ChangePasswordLoggedIn (ChangePasswordLoggedInRequest) returns (ChangePasswordLoggedInResponse);
 }
 
 enum OtpPurpose {
@@ -181,6 +251,7 @@ message LoginRequest {
 message AuthResponse {
   string user_id = 1;
   string display_name = 2;
+  string avatar_url = 3;
 }
 
 message ResetPasswordRequest {
@@ -190,3 +261,27 @@ message ResetPasswordRequest {
 }
 
 message ResetPasswordResponse {}
+
+message UpdateProfileRequest {
+  string user_id = 1;
+  string display_name = 2;
+  string avatar_url = 3;
+}
+
+message UpdateProfileResponse {
+  bool is_success = 1;
+  string status_message = 2;
+  string display_name = 3;
+  string avatar_url = 4;
+}
+
+message ChangePasswordLoggedInRequest {
+  string user_id = 1;
+  string current_password = 2;
+  string new_password = 3;
+}
+
+message ChangePasswordLoggedInResponse {
+  bool is_success = 1;
+  string status_message = 2;
+}

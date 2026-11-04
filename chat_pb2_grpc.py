@@ -69,6 +69,26 @@ class ChatServiceStub:
                 request_serializer=chat__pb2.StreamEventsRequest.SerializeToString,
                 response_deserializer=chat__pb2.ChatEvent.FromString,
                 _registered_method=True)
+        self.SendFriendRequest = channel.unary_unary(
+                '/chat.ChatService/SendFriendRequest',
+                request_serializer=chat__pb2.SendFriendRequestReq.SerializeToString,
+                response_deserializer=chat__pb2.SendFriendRequestResp.FromString,
+                _registered_method=True)
+        self.RespondFriendRequest = channel.unary_unary(
+                '/chat.ChatService/RespondFriendRequest',
+                request_serializer=chat__pb2.RespondFriendRequestReq.SerializeToString,
+                response_deserializer=chat__pb2.RespondFriendRequestResp.FromString,
+                _registered_method=True)
+        self.ListFriends = channel.unary_unary(
+                '/chat.ChatService/ListFriends',
+                request_serializer=chat__pb2.ListFriendsReq.SerializeToString,
+                response_deserializer=chat__pb2.ListFriendsResp.FromString,
+                _registered_method=True)
+        self.ListFriendRequests = channel.unary_unary(
+                '/chat.ChatService/ListFriendRequests',
+                request_serializer=chat__pb2.ListFriendRequestsReq.SerializeToString,
+                response_deserializer=chat__pb2.ListFriendRequestsResp.FromString,
+                _registered_method=True)
 
 
 class ChatServiceServicer:
@@ -118,6 +138,31 @@ class ChatServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SendFriendRequest(self, request, context):
+        """--- Hệ thống kết bạn ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RespondFriendRequest(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListFriends(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListFriendRequests(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ChatServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -155,6 +200,26 @@ def add_ChatServiceServicer_to_server(servicer, server):
                     servicer.SubscribeEvents,
                     request_deserializer=chat__pb2.StreamEventsRequest.FromString,
                     response_serializer=chat__pb2.ChatEvent.SerializeToString,
+            ),
+            'SendFriendRequest': grpc.unary_unary_rpc_method_handler(
+                    servicer.SendFriendRequest,
+                    request_deserializer=chat__pb2.SendFriendRequestReq.FromString,
+                    response_serializer=chat__pb2.SendFriendRequestResp.SerializeToString,
+            ),
+            'RespondFriendRequest': grpc.unary_unary_rpc_method_handler(
+                    servicer.RespondFriendRequest,
+                    request_deserializer=chat__pb2.RespondFriendRequestReq.FromString,
+                    response_serializer=chat__pb2.RespondFriendRequestResp.SerializeToString,
+            ),
+            'ListFriends': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListFriends,
+                    request_deserializer=chat__pb2.ListFriendsReq.FromString,
+                    response_serializer=chat__pb2.ListFriendsResp.SerializeToString,
+            ),
+            'ListFriendRequests': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListFriendRequests,
+                    request_deserializer=chat__pb2.ListFriendRequestsReq.FromString,
+                    response_serializer=chat__pb2.ListFriendRequestsResp.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -356,9 +421,117 @@ class ChatService:
             metadata,
             _registered_method=True)
 
+    @staticmethod
+    def SendFriendRequest(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/SendFriendRequest',
+            chat__pb2.SendFriendRequestReq.SerializeToString,
+            chat__pb2.SendFriendRequestResp.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RespondFriendRequest(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/RespondFriendRequest',
+            chat__pb2.RespondFriendRequestReq.SerializeToString,
+            chat__pb2.RespondFriendRequestResp.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListFriends(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/ListFriends',
+            chat__pb2.ListFriendsReq.SerializeToString,
+            chat__pb2.ListFriendsResp.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListFriendRequests(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/ListFriendRequests',
+            chat__pb2.ListFriendRequestsReq.SerializeToString,
+            chat__pb2.ListFriendRequestsResp.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
 
 class AuthServiceStub:
-    """---------------------------------------------------------------------- Auth
+    """---------------------------------------------------------------------- Auth & Profile
 
     """
 
@@ -388,10 +561,20 @@ class AuthServiceStub:
                 request_serializer=chat__pb2.ResetPasswordRequest.SerializeToString,
                 response_deserializer=chat__pb2.ResetPasswordResponse.FromString,
                 _registered_method=True)
+        self.UpdateProfile = channel.unary_unary(
+                '/chat.AuthService/UpdateProfile',
+                request_serializer=chat__pb2.UpdateProfileRequest.SerializeToString,
+                response_deserializer=chat__pb2.UpdateProfileResponse.FromString,
+                _registered_method=True)
+        self.ChangePasswordLoggedIn = channel.unary_unary(
+                '/chat.AuthService/ChangePasswordLoggedIn',
+                request_serializer=chat__pb2.ChangePasswordLoggedInRequest.SerializeToString,
+                response_deserializer=chat__pb2.ChangePasswordLoggedInResponse.FromString,
+                _registered_method=True)
 
 
 class AuthServiceServicer:
-    """---------------------------------------------------------------------- Auth
+    """---------------------------------------------------------------------- Auth & Profile
 
     """
 
@@ -414,6 +597,19 @@ class AuthServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def ResetPassword(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateProfile(self, request, context):
+        """--- Tab Cá nhân ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ChangePasswordLoggedIn(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -442,6 +638,16 @@ def add_AuthServiceServicer_to_server(servicer, server):
                     request_deserializer=chat__pb2.ResetPasswordRequest.FromString,
                     response_serializer=chat__pb2.ResetPasswordResponse.SerializeToString,
             ),
+            'UpdateProfile': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateProfile,
+                    request_deserializer=chat__pb2.UpdateProfileRequest.FromString,
+                    response_serializer=chat__pb2.UpdateProfileResponse.SerializeToString,
+            ),
+            'ChangePasswordLoggedIn': grpc.unary_unary_rpc_method_handler(
+                    servicer.ChangePasswordLoggedIn,
+                    request_deserializer=chat__pb2.ChangePasswordLoggedInRequest.FromString,
+                    response_serializer=chat__pb2.ChangePasswordLoggedInResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'chat.AuthService', rpc_method_handlers)
@@ -451,7 +657,7 @@ def add_AuthServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class AuthService:
-    """---------------------------------------------------------------------- Auth
+    """---------------------------------------------------------------------- Auth & Profile
 
     """
 
@@ -553,6 +759,60 @@ class AuthService:
             '/chat.AuthService/ResetPassword',
             chat__pb2.ResetPasswordRequest.SerializeToString,
             chat__pb2.ResetPasswordResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateProfile(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/UpdateProfile',
+            chat__pb2.UpdateProfileRequest.SerializeToString,
+            chat__pb2.UpdateProfileResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ChangePasswordLoggedIn(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/ChangePasswordLoggedIn',
+            chat__pb2.ChangePasswordLoggedInRequest.SerializeToString,
+            chat__pb2.ChangePasswordLoggedInResponse.FromString,
             options,
             channel_credentials,
             insecure,

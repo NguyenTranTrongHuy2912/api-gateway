@@ -528,6 +528,10 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                     event_type_name = "ROOM_UPDATED"
                 elif event.event_type == chat_pb2.EVENT_READ_RECEIPT:
                     event_type_name = "READ_RECEIPT"
+                elif event.event_type == chat_pb2.EVENT_FRIEND_REQUEST:
+                    event_type_name = "FRIEND_REQUEST"
+                elif event.event_type == chat_pb2.EVENT_FRIEND_ACCEPTED:
+                    event_type_name = "FRIEND_ACCEPTED"
 
                 payload = {
                     "type": event_type_name,
@@ -545,6 +549,16 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                         "media_width": event.message.media_width,
                         "media_height": event.message.media_height,
                     }
+                elif event.event_type == chat_pb2.EVENT_FRIEND_REQUEST:
+                    payload["friend_request"] = {
+                        "request_id": event.friend_request.request_id,
+                        "sender_id": event.friend_request.sender_id,
+                        "sender_name": event.friend_request.sender_name,
+                        "sender_email": event.friend_request.sender_email,
+                        "created_at": event.friend_request.created_at,
+                    }
+                elif event.event_type == chat_pb2.EVENT_FRIEND_ACCEPTED:
+                    payload["user_id"] = event.user_id
                 await websocket.send_json(payload)
         except asyncio.CancelledError:
             pass
@@ -567,6 +581,152 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
     finally:
         forward_task.cancel()
         stream.cancel()
+
+
+# ---------------------------------------------------------------- Hệ thống kết bạn
+
+
+@app.post("/api/v1/friends/request")
+async def send_friend_request(
+    payload: FriendRequestBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.stub.SendFriendRequest(
+            chat_pb2.SendFriendRequestReq(sender_id=user_id, receiver_id=payload.receiver_id),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+    return {
+        "ok": resp.is_success,
+        "message": resp.status_message,
+        "request": {
+            "request_id": resp.request.request_id,
+            "sender_id": resp.request.sender_id,
+            "sender_name": resp.request.sender_name,
+            "sender_email": resp.request.sender_email,
+            "receiver_id": resp.request.receiver_id,
+            "created_at": resp.request.created_at,
+        },
+    }
+
+
+@app.post("/api/v1/friends/respond")
+async def respond_friend_request(
+    payload: RespondFriendRequestBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.stub.RespondFriendRequest(
+            chat_pb2.RespondFriendRequestReq(
+                user_id=user_id, request_id=payload.request_id, accept=payload.accept
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+    return {"ok": resp.is_success, "message": resp.status_message}
+
+
+@app.get("/api/v1/friends")
+async def list_friends(
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.stub.ListFriends(
+            chat_pb2.ListFriendsReq(user_id=user_id),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+    return {
+        "friends": [
+            {
+                "user_id": f.user_id,
+                "display_name": f.display_name,
+                "email": f.email,
+                "avatar_url": f.avatar_url,
+            }
+            for f in resp.friends
+        ]
+    }
+
+
+@app.get("/api/v1/friends/requests")
+async def list_friend_requests(
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.stub.ListFriendRequests(
+            chat_pb2.ListFriendRequestsReq(user_id=user_id),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+    return {
+        "requests": [
+            {
+                "request_id": r.request_id,
+                "sender_id": r.sender_id,
+                "sender_name": r.sender_name,
+                "sender_email": r.sender_email,
+                "created_at": r.created_at,
+            }
+            for r in resp.requests
+        ]
+    }
+
+
+# ---------------------------------------------------------------- Tab Cá nhân
+
+
+@app.put("/api/v1/users/profile")
+async def update_profile(
+    payload: UpdateProfileBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.auth_stub.UpdateProfile(
+            chat_pb2.UpdateProfileRequest(
+                user_id=user_id,
+                display_name=payload.display_name or "",
+                avatar_url=payload.avatar_url or "",
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+    return {
+        "ok": resp.is_success,
+        "display_name": resp.display_name,
+        "avatar_url": resp.avatar_url,
+    }
+
+
+@app.post("/api/v1/users/change-password")
+async def change_password_logged_in(
+    payload: ChangePasswordLoggedInBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        resp = await request.app.state.auth_stub.ChangePasswordLoggedIn(
+            chat_pb2.ChangePasswordLoggedInRequest(
+                user_id=user_id,
+                current_password=payload.current_password,
+                new_password=payload.new_password,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e)
+    return {"ok": resp.is_success, "message": resp.status_message}
 
 
 if __name__ == "__main__":
