@@ -16,12 +16,23 @@ service ChatService {
   rpc MarkRoomRead (MarkRoomReadRequest) returns (MarkRoomReadResponse);
 }
 
+enum MessageType {
+  MESSAGE_TYPE_TEXT = 0;    // mặc định: tin cũ không có trường này vẫn là text
+  MESSAGE_TYPE_IMAGE = 1;
+  MESSAGE_TYPE_VIDEO = 2;   // dành sẵn, chưa hỗ trợ
+}
+
 message ChatMessage {
   string message_id = 1;
   string room_id = 2;
   string sender_id = 3;
-  string content = 4;
+  string content = 4;        // TEXT: nội dung; IMAGE: để trống
   int64 timestamp = 5;
+  MessageType type = 6;
+  string media_url = 7;      // IMAGE/VIDEO: URL https của file đã upload
+  int32 media_width = 8;
+  int32 media_height = 9;
+  int64 media_duration_ms = 10;  // dành cho VIDEO
 }
 
 message ChatResponse {
