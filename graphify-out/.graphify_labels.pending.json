@@ -1,9 +1,8 @@
 {
   "0": "main.py",
-  "1": "AuthService",
+  "1": "chat_pb2_grpc.py",
   "2": "ChatServiceServicer",
   "3": "to_http_error",
-  "4": "auth.py",
   "5": "ChatServiceStub",
   "6": "AuthServiceServicer",
   "11": "ChatService"
