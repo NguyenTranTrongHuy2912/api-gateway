@@ -13,9 +13,14 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
+
 import chat_pb2
 import chat_pb2_grpc
-from auth import create_token, decode_token, get_current_user
+from auth import create_token, decode_token, get_current_user, revoke_user_tokens
 
 log = logging.getLogger("gateway")
 
@@ -37,7 +42,7 @@ def is_own_image_url(url: str) -> bool:
     if not CLOUDINARY_CLOUD_NAME or not url:
         return False
     pattern = (
-        rf"^https://res\.cloudinary\.com/{re.escape(CLOUDINARY_CLOUD_NAME)}/image/upload/"
+        rf"^https://res\.cloudinary\.com/{re.escape(CLOUDINARY_CLOUD_NAME)}/(?:image|video)/upload/"
         rf"(?:v\d+/)?{re.escape(CLOUDINARY_FOLDER)}/[A-Za-z0-9_-]+\.[A-Za-z0-9]+$"
     )
     return re.match(pattern, url) is not None
@@ -114,6 +119,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Bạn gửi quá nhiều yêu cầu. Vui lòng thử lại sau 1 phút."},
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -127,15 +142,16 @@ class SendMessageRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     room_id: str = Field(min_length=1, max_length=100)
-    type: Literal["TEXT", "IMAGE"] = "TEXT"
-    # TEXT: bắt buộc. IMAGE: để trống.
+    type: Literal["TEXT", "IMAGE", "VIDEO"] = "TEXT"
+    # TEXT: bắt buộc. IMAGE/VIDEO: để trống.
     content: str = Field(default="", max_length=4000)
     # Optional: client-generated id. If omitted, the gateway generates a uuid.
     message_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    # Chỉ dùng cho IMAGE
+    # Dùng cho IMAGE hoặc VIDEO
     media_url: Optional[str] = Field(default=None, max_length=500)
     media_width: int = Field(default=0, ge=0, le=20000)
     media_height: int = Field(default=0, ge=0, le=20000)
+    media_duration_ms: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def check_by_type(self):
@@ -230,7 +246,8 @@ async def root():
 
 
 @app.post("/api/v1/auth/request-otp")
-async def request_otp(payload: RequestOtpBody, request: Request):
+@limiter.limit("5/minute")
+async def request_otp(request: Request, payload: RequestOtpBody):
     try:
         resp = await request.app.state.auth_stub.RequestOtp(
             chat_pb2.RequestOtpRequest(account=payload.account), timeout=GRPC_TIMEOUT
@@ -244,7 +261,8 @@ async def request_otp(payload: RequestOtpBody, request: Request):
 
 
 @app.post("/api/v1/auth/forgot-password")
-async def forgot_password(payload: RequestOtpBody, request: Request):
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, payload: RequestOtpBody):
     try:
         resp = await request.app.state.auth_stub.RequestOtp(
             chat_pb2.RequestOtpRequest(
@@ -262,7 +280,8 @@ async def forgot_password(payload: RequestOtpBody, request: Request):
 
 
 @app.post("/api/v1/auth/reset-password")
-async def reset_password(payload: ResetPasswordBody, request: Request):
+@limiter.limit("5/minute")
+async def reset_password(request: Request, payload: ResetPasswordBody):
     try:
         await request.app.state.auth_stub.ResetPassword(
             chat_pb2.ResetPasswordRequest(
@@ -299,7 +318,8 @@ async def register(payload: RegisterBody, request: Request):
 
 
 @app.post("/api/v1/auth/login")
-async def login(payload: LoginBody, request: Request):
+@limiter.limit("10/minute")
+async def login(request: Request, payload: LoginBody):
     try:
         resp = await request.app.state.auth_stub.Login(
             chat_pb2.LoginRequest(account=payload.account, password=payload.password),
@@ -406,26 +426,39 @@ async def mark_room_read(
 
 
 @app.post("/api/v1/uploads/sign")
-async def sign_upload(user_id: str = Depends(get_current_user)):
-    """Cấp chữ ký ngắn hạn để app upload ảnh thẳng lên Cloudinary (ảnh không đi qua gateway)."""
+@limiter.limit("20/minute")
+async def sign_upload(
+    request: Request,
+    resource_type: str = "image",
+    user_id: str = Depends(get_current_user),
+):
+    """Cấp chữ ký ngắn hạn để app upload ảnh/video thẳng lên Cloudinary."""
     if not (CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET):
         raise HTTPException(status_code=503, detail="Upload is not configured")
 
+    res_type = "video" if resource_type == "video" else "image"
     timestamp = int(time.time())
     public_id = f"{CLOUDINARY_FOLDER}/{uuid.uuid4().hex}"
-    # Cloudinary: các tham số được ký xếp theo thứ tự chữ cái, nối bằng &, rồi cộng API secret
-    to_sign = (
-        f"public_id={public_id}&timestamp={timestamp}"
-        f"&transformation={IMAGE_INCOMING_TRANSFORMATION}"
-    )
+    
+    if res_type == "video":
+        to_sign = f"public_id={public_id}&timestamp={timestamp}"
+        transformation = ""
+    else:
+        to_sign = (
+            f"public_id={public_id}&timestamp={timestamp}"
+            f"&transformation={IMAGE_INCOMING_TRANSFORMATION}"
+        )
+        transformation = IMAGE_INCOMING_TRANSFORMATION
+
     signature = hashlib.sha1((to_sign + CLOUDINARY_API_SECRET).encode("utf-8")).hexdigest()
     return {
-        "upload_url": f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/image/upload",
+        "upload_url": f"https://api.cloudinary.com/v1_1/{CLOUDINARY_CLOUD_NAME}/{res_type}/upload",
         "api_key": CLOUDINARY_API_KEY,
         "timestamp": timestamp,
         "public_id": public_id,
-        "transformation": IMAGE_INCOMING_TRANSFORMATION,
+        "transformation": transformation,
         "signature": signature,
+        "resource_type": res_type,
     }
 
 
@@ -444,10 +477,15 @@ async def send_message(
         sender_id=user_id,  # from the token, never from the client
         content=payload.content,
         timestamp=int(time.time() * 1000),
-        type=chat_pb2.MESSAGE_TYPE_IMAGE if payload.type == "IMAGE" else chat_pb2.MESSAGE_TYPE_TEXT,
+        type=(
+            chat_pb2.MESSAGE_TYPE_IMAGE if payload.type == "IMAGE"
+            else chat_pb2.MESSAGE_TYPE_VIDEO if payload.type == "VIDEO"
+            else chat_pb2.MESSAGE_TYPE_TEXT
+        ),
         media_url=payload.media_url or "",
         media_width=payload.media_width,
         media_height=payload.media_height,
+        media_duration_ms=payload.media_duration_ms,
     )
     try:
         resp = await request.app.state.stub.SendMessage(grpc_request, timeout=GRPC_TIMEOUT)
@@ -493,6 +531,7 @@ async def get_history(
                 "media_url": m.media_url,
                 "media_width": m.media_width,
                 "media_height": m.media_height,
+                "media_duration_ms": m.media_duration_ms,
             }
             for m in resp.messages
         ],
@@ -628,6 +667,7 @@ async def respond_friend_request(
         )
     except grpc.RpcError as e:
         raise to_http_error(e)
+    revoke_user_tokens(user_id)
     return {"ok": resp.is_success, "message": resp.status_message}
 
 
@@ -726,6 +766,7 @@ async def change_password_logged_in(
         )
     except grpc.RpcError as e:
         raise to_http_error(e)
+    revoke_user_tokens(user_id)
     return {"ok": resp.is_success, "message": resp.status_message}
 
 
