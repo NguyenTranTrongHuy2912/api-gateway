@@ -23,6 +23,7 @@ import chat_pb2
 import chat_pb2_grpc
 from auth import create_token, decode_token, get_current_user, revoke_user_tokens
 from ai_service import generate_ai_reply, summarize_conversation
+from vector_db import vector_db
 
 log = logging.getLogger("gateway")
 
@@ -529,6 +530,19 @@ async def send_message(
         msg_type=payload.type,
         stub=request.app.state.stub,
     ))
+    if payload.content:
+        try:
+            vector_db.upsert(
+                doc_id=resp.message_id or payload.message_id,
+                text=payload.content,
+                metadata={
+                    "room_id": payload.room_id,
+                    "sender_id": user_id,
+                    "timestamp": resp.timestamp,
+                }
+            )
+        except Exception as e:
+            log.warning("Could not index message to vector_db: %s", e)
 
     return {
         "message_id": resp.message_id,
@@ -1014,6 +1028,127 @@ async def ai_summarize_chat(
         "total_messages": len(msgs),
     }
 
+
+
+# ====================================================================== Vector Database & RAG Endpoints
+
+class SemanticSearchBody(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    room_id: str
+    top_k: int = 5
+
+class RagChatBody(BaseModel):
+    question: str = Field(min_length=1, max_length=1000)
+    room_id: str
+
+
+@app.post("/api/v1/ai/semantic-search")
+async def semantic_search(
+    payload: SemanticSearchBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    Tìm kiếm ngữ nghĩa (Semantic Search) trong phòng chat bằng Vector Database
+    Sử dụng thuật toán Cosine Similarity K-NN.
+    """
+    try:
+        hist_resp = await request.app.state.stub.GetMessageHistory(
+            chat_pb2.HistoryRequest(
+                room_id=payload.room_id,
+                limit=50,
+                before_timestamp=0,
+                user_id=user_id,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+
+    # Đưa tin nhắn vào vector database
+    msgs = []
+    for m in hist_resp.messages:
+        if m.content:
+            msgs.append({
+                "id": m.message_id,
+                "content": m.content,
+                "room_id": m.room_id,
+                "sender_id": m.sender_id,
+                "sender_name": "Bạn" if m.sender_id == user_id else "Thành viên",
+                "timestamp": m.timestamp,
+            })
+    vector_db.index_messages(msgs)
+
+    # Tìm kiếm K vector gần nhất
+    results = vector_db.search(payload.query, top_k=payload.top_k, room_id=payload.room_id)
+    return {
+        "ok": True,
+        "query": payload.query,
+        "results": results,
+        "total": len(results),
+        "algorithm": "Cosine Similarity + L2-Normalized Dense Vectors",
+    }
+
+
+@app.post("/api/v1/ai/rag-chat")
+async def rag_chat(
+    payload: RagChatBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    Hỏi đáp thông minh kết hợp Vector Database RAG (Retrieval-Augmented Generation)
+    """
+    try:
+        hist_resp = await request.app.state.stub.GetMessageHistory(
+            chat_pb2.HistoryRequest(
+                room_id=payload.room_id,
+                limit=50,
+                before_timestamp=0,
+                user_id=user_id,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+
+    rooms_resp = await request.app.state.stub.ListRooms(
+        chat_pb2.ListRoomsRequest(user_id=user_id),
+        timeout=GRPC_TIMEOUT,
+    )
+    room_name = "Cuộc trò chuyện"
+    for r in rooms_resp.rooms:
+        if r.room_id == payload.room_id:
+            room_name = r.name
+            break
+
+    msgs = []
+    for m in hist_resp.messages:
+        if m.content:
+            msgs.append({
+                "id": m.message_id,
+                "content": m.content,
+                "room_id": m.room_id,
+                "sender_id": m.sender_id,
+                "sender_name": "Bạn" if m.sender_id == user_id else "Thành viên",
+                "timestamp": m.timestamp,
+            })
+
+    rag_result = vector_db.rag_chat(
+        question=payload.question,
+        room_id=payload.room_id,
+        room_name=room_name,
+        messages=msgs,
+    )
+    return {
+        "ok": True,
+        "room_name": room_name,
+        "question": payload.question,
+        "answer": rag_result["answer"],
+        "matched_messages": rag_result["matched_messages"],
+        "total_matches": rag_result["total_matches"],
+        "algorithm": rag_result["algorithm"],
+    }
 
 if __name__ == "__main__":
 
