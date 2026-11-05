@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import re
@@ -231,6 +232,11 @@ class ChangePasswordLoggedInBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=6, max_length=64)
+
+
+class RegisterPushTokenBody(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    push_token: str = Field(min_length=1, max_length=200)
 
 
 def room_to_dict(room: chat_pb2.Room) -> dict:
@@ -515,6 +521,14 @@ async def send_message(
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
 
+    asyncio.create_task(notify_new_message(
+        room_id=payload.room_id,
+        sender_id=user_id,
+        content=payload.content,
+        msg_type=payload.type,
+        stub=request.app.state.stub,
+    ))
+
     return {
         "message_id": resp.message_id,
         "is_success": resp.is_success,
@@ -562,6 +576,102 @@ async def get_history(
     }
 
 
+# ---------------------------------------------------------------- Presence & Push State
+active_user_connections: dict[str, set[WebSocket]] = {}
+user_last_seen: dict[str, int] = {}
+user_push_tokens: dict[str, str] = {}
+
+
+async def broadcast_ws_event(payload: dict):
+    """Gửi sự kiện realtime tới tất cả các WebSocket client đang kết nối"""
+    all_sockets = []
+    for sockets in list(active_user_connections.values()):
+        all_sockets.extend(list(sockets))
+    for ws in all_sockets:
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            pass
+
+
+async def send_expo_push(target_user_ids: list[str], title: str, body: str, data: dict = None):
+    """Gửi push notification qua Expo Push API"""
+    tokens = [
+        user_push_tokens[uid]
+        for uid in target_user_ids
+        if uid in user_push_tokens and user_push_tokens[uid].startswith("ExponentPushToken")
+    ]
+    if not tokens:
+        return
+
+    messages = [
+        {
+            "to": token,
+            "sound": "default",
+            "title": title,
+            "body": body,
+            "data": data or {},
+            "priority": "high",
+            "channelId": "chat-messages",
+        }
+        for token in tokens
+    ]
+
+    try:
+        import urllib.request
+        req = urllib.request.Request(
+            "https://exp.host/--/api/v2/push/send",
+            data=json.dumps(messages).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip, deflate",
+            },
+            method="POST",
+        )
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=5).read())
+    except Exception as e:
+        log.warning("Failed to send Expo push notification: %s", e)
+
+
+async def notify_new_message(room_id: str, sender_id: str, content: str, msg_type: str, stub):
+    try:
+        rooms_resp = await stub.ListRooms(chat_pb2.ListRoomsRequest(user_id=sender_id), timeout=GRPC_TIMEOUT)
+        room = next((r for r in rooms_resp.rooms if r.room_id == room_id), None)
+        if not room:
+            return
+        sender_member = next((m for m in room.members if m.user_id == sender_id), None)
+        sender_name = sender_member.display_name if sender_member and sender_member.display_name else "Tin nhắn mới"
+
+        title = room.name if (room.type == chat_pb2.ROOM_TYPE_GROUP and room.name) else sender_name
+        body_text = content
+        if msg_type == "IMAGE":
+            body_text = "Đã gửi một hình ảnh 📷"
+        elif msg_type == "VIDEO":
+            body_text = "Đã gửi một video 🎬"
+
+        target_ids = [uid for uid in room.member_ids if uid != sender_id]
+        await send_expo_push(target_ids, title=title, body=body_text, data={"roomId": room_id, "type": "chat"})
+    except Exception as e:
+        log.warning("Error pushing new message notification: %s", e)
+
+
+@app.get("/api/v1/users/online")
+async def get_online_users(user_id: str = Depends(get_current_user)):
+    return {"online_user_ids": list(active_user_connections.keys())}
+
+
+@app.post("/api/v1/users/push-token")
+async def register_push_token(
+    payload: RegisterPushTokenBody,
+    user_id: str = Depends(get_current_user),
+):
+    user_push_tokens[user_id] = payload.push_token
+    log.info("Registered push token for user %s: %s", user_id, payload.push_token)
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- Realtime WebSocket
 
 
@@ -575,6 +685,29 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
 
     await websocket.accept()
     log.info("WebSocket client connected: user_id=%s", user_id)
+
+    # Đăng ký active connection
+    is_first = (user_id not in active_user_connections) or (len(active_user_connections[user_id]) == 0)
+    if user_id not in active_user_connections:
+        active_user_connections[user_id] = set()
+    active_user_connections[user_id].add(websocket)
+
+    # Gửi danh sách online ban đầu cho client vừa kết nối
+    try:
+        await websocket.send_json({
+            "type": "INITIAL_PRESENCE",
+            "online_user_ids": list(active_user_connections.keys()),
+        })
+    except Exception:
+        pass
+
+    if is_first:
+        asyncio.create_task(broadcast_ws_event({
+            "type": "USER_PRESENCE",
+            "user_id": user_id,
+            "is_online": True,
+            "timestamp": int(time.time() * 1000),
+        }))
 
     grpc_req = chat_pb2.StreamEventsRequest(user_id=user_id)
     stub = websocket.app.state.stub
@@ -643,6 +776,19 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
     finally:
         forward_task.cancel()
         stream.cancel()
+        if user_id in active_user_connections:
+            active_user_connections[user_id].discard(websocket)
+            if len(active_user_connections[user_id]) == 0:
+                del active_user_connections[user_id]
+                now_ms = int(time.time() * 1000)
+                user_last_seen[user_id] = now_ms
+                asyncio.create_task(broadcast_ws_event({
+                    "type": "USER_PRESENCE",
+                    "user_id": user_id,
+                    "is_online": False,
+                    "last_seen": now_ms,
+                    "timestamp": now_ms,
+                }))
 
 
 # ---------------------------------------------------------------- Hệ thống kết bạn
@@ -661,6 +807,13 @@ async def send_friend_request(
         )
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
+    asyncio.create_task(send_expo_push(
+        target_user_ids=[payload.receiver_id],
+        title="Lời mời kết bạn mới",
+        body=f"{resp.request.sender_name} đã gửi lời mời kết bạn cho bạn.",
+        data={"type": "friend_request"},
+    ))
+
     return {
         "ok": resp.is_success,
         "message": resp.status_message,
