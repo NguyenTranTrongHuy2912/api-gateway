@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 import chat_pb2
 import chat_pb2_grpc
 from auth import create_token, decode_token, get_current_user, revoke_user_tokens
+from ai_service import generate_ai_reply, summarize_conversation
 
 log = logging.getLogger("gateway")
 
@@ -945,7 +946,77 @@ async def change_password_logged_in(
     return {"ok": resp.is_success, "message": resp.status_message}
 
 
+
+# ====================================================================== AI Endpoints (Google Gemini)
+
+class AiChatBody(BaseModel):
+    prompt: str = Field(min_length=1, max_length=2000)
+
+class AiSummarizeBody(BaseModel):
+    room_id: str
+    limit: int = 30
+
+@app.post("/api/v1/ai/chat")
+async def ai_chat(
+    payload: AiChatBody,
+    user_id: str = Depends(get_current_user),
+):
+    reply = generate_ai_reply(payload.prompt)
+    return {
+        "ok": True,
+        "reply": reply,
+        "model": "gemini-1.5-flash",
+    }
+
+@app.post("/api/v1/ai/summarize")
+async def ai_summarize_chat(
+    payload: AiSummarizeBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    try:
+        hist_resp = await request.app.state.stub.GetMessageHistory(
+            chat_pb2.HistoryRequest(
+                room_id=payload.room_id,
+                limit=payload.limit,
+                before_timestamp=0,
+                user_id=user_id,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+
+    rooms_resp = await request.app.state.stub.ListRooms(
+        chat_pb2.ListRoomsRequest(user_id=user_id),
+        timeout=GRPC_TIMEOUT,
+    )
+    room_name = "Cuộc trò chuyện"
+    for r in rooms_resp.rooms:
+        if r.room_id == payload.room_id:
+            room_name = r.name
+            break
+
+    msgs = []
+    for m in reversed(hist_resp.messages):
+        msgs.append({
+            "sender_id": m.sender_id,
+            "sender_name": "Bạn" if m.sender_id == user_id else "Thành viên",
+            "content": m.content,
+            "timestamp": m.timestamp,
+        })
+
+    summary_text = summarize_conversation(room_name, msgs)
+    return {
+        "ok": True,
+        "room_name": room_name,
+        "summary": summary_text,
+        "total_messages": len(msgs),
+    }
+
+
 if __name__ == "__main__":
+
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
