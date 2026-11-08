@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 
 import chat_pb2
 import chat_pb2_grpc
-from auth import create_token, decode_token, get_current_user, revoke_user_tokens
+from auth import create_token, decode_token, get_current_user, revoke_user_tokens, get_current_admin, get_user_role, set_user_role, USER_ROLES_STORE
 from ai_service import generate_ai_reply, summarize_conversation
 from vector_db import vector_db
 
@@ -349,10 +349,12 @@ async def register(payload: RegisterBody, request: Request):
         )
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
+    role = get_user_role(resp.user_id, payload.account)
     return {
-        "token": create_token(resp.user_id),
+        "token": create_token(resp.user_id, role=role),
         "user_id": resp.user_id,
         "display_name": resp.display_name,
+        "role": role,
     }
 
 
@@ -366,12 +368,59 @@ async def login(request: Request, payload: LoginBody):
         )
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
+    role = get_user_role(resp.user_id, payload.account)
     return {
-        "token": create_token(resp.user_id),
+        "token": create_token(resp.user_id, role=role),
         "user_id": resp.user_id,
         "display_name": resp.display_name,
+        "role": role,
     }
 
+
+
+class SetUserRoleBody(BaseModel):
+    role: Literal["ADMIN", "USER"]
+
+
+@app.get("/api/v1/users/me")
+async def get_my_profile(
+    user_id: str = Depends(get_current_user),
+):
+    role = get_user_role(user_id)
+    return {
+        "user_id": user_id,
+        "role": role,
+        "is_admin": role == "ADMIN",
+    }
+
+
+@app.get("/api/v1/admin/stats")
+async def get_admin_stats(
+    admin_id: str = Depends(get_current_admin),
+):
+    return {
+        "database": "MongoDB Atlas Cloud",
+        "status": "Online",
+        "total_configured_roles": len(USER_ROLES_STORE),
+        "vector_indexed_messages": vector_db.count(),
+        "admin_id": admin_id,
+        "system_role": "ADMIN",
+    }
+
+
+@app.patch("/api/v1/admin/users/{target_user_id}/role")
+async def update_user_role_admin(
+    target_user_id: str,
+    body: SetUserRoleBody,
+    admin_id: str = Depends(get_current_admin),
+):
+    set_user_role(target_user_id, body.role)
+    return {
+        "ok": True,
+        "user_id": target_user_id,
+        "new_role": body.role,
+        "updated_by": admin_id,
+    }
 
 # ------------------------------------------------------------------ Users
 
