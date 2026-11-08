@@ -120,6 +120,9 @@ class MessageVectorDB:
         except Exception as e:
             log.warning("Could not save vector store: %s", e)
 
+    def count(self) -> int:
+        return len(self.documents)
+
     def upsert(self, doc_id: str, text: str, metadata: dict) -> list[float]:
         """Index một tin nhắn vào Vector Database"""
         if not text.strip():

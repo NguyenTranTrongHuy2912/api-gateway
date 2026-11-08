@@ -45,7 +45,20 @@ CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "")
 CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "")
 CLOUDINARY_FOLDER = os.getenv("CLOUDINARY_FOLDER", "chatapp").strip("/")
 # Cloudinary tự thu nhỏ ảnh khi nhận (áp dụng trước khi lưu), nên app không cần nén kích thước
+# Cloudinary tự thu nhỏ ảnh khi nhận (áp dụng trước khi lưu), nên app không cần nén kích thước
 IMAGE_INCOMING_TRANSFORMATION = "c_limit,w_1600,h_1600"
+
+from pymongo import MongoClient
+
+MONGO_URI = os.getenv("MONGO_URI", "")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "chat_db")
+mongo_db = None
+try:
+    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    mongo_db = mongo_client[MONGO_DB_NAME]
+    log.info("Admin MongoDB connected successfully")
+except Exception as e:
+    log.warning("Admin MongoDB connection error: %s", e)
 
 
 def is_own_image_url(url: str) -> bool:
@@ -382,11 +395,22 @@ class SetUserRoleBody(BaseModel):
     role: Literal["ADMIN", "USER"]
 
 
+class SetUserStatusBody(BaseModel):
+    is_active: bool
+
+
 @app.get("/api/v1/users/me")
 async def get_my_profile(
     user_id: str = Depends(get_current_user),
 ):
     role = get_user_role(user_id)
+    if mongo_db is not None:
+        try:
+            u = mongo_db["users"].find_one({"_id": user_id}, {"role": 1, "display_name": 1, "account": 1})
+            if u and "role" in u:
+                role = u["role"]
+        except Exception:
+            pass
     return {
         "user_id": user_id,
         "role": role,
@@ -398,14 +422,69 @@ async def get_my_profile(
 async def get_admin_stats(
     admin_id: str = Depends(get_current_admin),
 ):
+    total_users = 0
+    total_admins = 0
+    total_active_users = 0
+    total_rooms = 0
+    total_messages = 0
+
+    if mongo_db is not None:
+        try:
+            total_users = mongo_db["users"].count_documents({})
+            total_admins = mongo_db["users"].count_documents({"role": "ADMIN"})
+            total_active_users = mongo_db["users"].count_documents({"is_active": True})
+            total_rooms = mongo_db["rooms"].count_documents({})
+            total_messages = mongo_db["messages"].count_documents({})
+        except Exception as e:
+            log.warning("Admin stats mongo count error: %s", e)
+
     return {
         "database": "MongoDB Atlas Cloud",
         "status": "Online",
-        "total_configured_roles": len(USER_ROLES_STORE),
+        "system_status": "Healthy",
+        "total_users": total_users,
+        "total_admins": total_admins,
+        "total_active_users": total_active_users,
+        "total_rooms": total_rooms,
+        "total_messages": total_messages,
         "vector_indexed_messages": vector_db.count(),
         "admin_id": admin_id,
         "system_role": "ADMIN",
     }
+
+
+@app.get("/api/v1/admin/users")
+async def get_admin_users(
+    admin_id: str = Depends(get_current_admin),
+    q: Optional[str] = Query(None),
+):
+    if mongo_db is None:
+        return {"users": []}
+
+    query = {}
+    if q and q.strip():
+        search_term = q.strip()
+        query = {
+            "$or": [
+                {"account": {"$regex": search_term, "$options": "i"}},
+                {"display_name": {"$regex": search_term, "$options": "i"}},
+            ]
+        }
+
+    docs = mongo_db["users"].find(query, {"password_hash": 0}).sort("created_at", -1).limit(50)
+    users_list = []
+    for d in docs:
+        users_list.append({
+            "user_id": d.get("_id", ""),
+            "account": d.get("account", ""),
+            "display_name": d.get("display_name", ""),
+            "role": d.get("role", "USER"),
+            "is_active": d.get("is_active", True),
+            "avatar_url": d.get("avatar_url", ""),
+            "created_at": d.get("created_at", 0),
+        })
+
+    return {"users": users_list}
 
 
 @app.patch("/api/v1/admin/users/{target_user_id}/role")
@@ -415,10 +494,34 @@ async def update_user_role_admin(
     admin_id: str = Depends(get_current_admin),
 ):
     set_user_role(target_user_id, body.role)
+    if mongo_db is not None:
+        mongo_db["users"].update_one(
+            {"_id": target_user_id},
+            {"$set": {"role": body.role}}
+        )
     return {
         "ok": True,
         "user_id": target_user_id,
         "new_role": body.role,
+        "updated_by": admin_id,
+    }
+
+
+@app.patch("/api/v1/admin/users/{target_user_id}/status")
+async def update_user_status_admin(
+    target_user_id: str,
+    body: SetUserStatusBody,
+    admin_id: str = Depends(get_current_admin),
+):
+    if mongo_db is not None:
+        mongo_db["users"].update_one(
+            {"_id": target_user_id},
+            {"$set": {"is_active": body.is_active}}
+        )
+    return {
+        "ok": True,
+        "user_id": target_user_id,
+        "is_active": body.is_active,
         "updated_by": admin_id,
     }
 

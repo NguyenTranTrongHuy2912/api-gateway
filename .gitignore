@@ -1,5 +1,9 @@
 venv/
+.venv/
 __pycache__/
+*.pyc
 .env
 .env.*
 !.env.example
+seed_users.py
+*seed*.py
