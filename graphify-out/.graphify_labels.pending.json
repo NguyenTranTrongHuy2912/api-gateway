@@ -3,7 +3,18 @@
   "1": "chat_pb2_grpc.py",
   "2": "ChatServiceServicer",
   "3": "to_http_error",
-  "5": "ChatServiceStub",
+  "4": "vector_db.py",
+  "5": "auth.py",
   "6": "AuthServiceServicer",
-  "11": "ChatService"
+  "7": "FastAPI gRPC Gateway & BFF",
+  "8": "send_message",
+  "9": "Request",
+  "10": "BaseModel",
+  "11": "post",
+  "12": "set_user_role",
+  "13": "ai_chat",
+  "14": "rate_limit_handler",
+  "15": "rag_chat",
+  "16": "semantic_search",
+  "17": "change_password_logged_in"
 }

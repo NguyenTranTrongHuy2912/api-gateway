@@ -1,20 +1,20 @@
 {
   "chat_pb2.py": {
-    "mtime": 1793792716.827731,
-    "seen": 1793793369.150762,
-    "ast_hash": "aef694473677174607b147a78ce5a276",
+    "mtime": 1793881864.805736,
+    "seen": 1793881867.4110277,
+    "ast_hash": "f0a7457571bd9e3d7a2e05689f667f97",
     "semantic_hash": ""
   },
   "chat_pb2_grpc.py": {
-    "mtime": 1793792716.827731,
-    "seen": 1793793369.1507647,
-    "ast_hash": "09018f20e12abb26dcdb4aa2fb71de3e",
+    "mtime": 1793881864.805736,
+    "seen": 1793881867.4110296,
+    "ast_hash": "031b2e522e55d99efefc83b8a9c194a8",
     "semantic_hash": ""
   },
   "main.py": {
-    "mtime": 1793792690.2705636,
-    "seen": 1793793369.1507668,
-    "ast_hash": "ab7ccd29e3ef4557eb5fd2ae4a4d6024",
+    "mtime": 1794153322.4093843,
+    "seen": 1794153325.374405,
+    "ast_hash": "936bf496f6baf22fac20048b3daaeb7e",
     "semantic_hash": ""
   },
   "README.md": {
@@ -24,21 +24,39 @@
     "semantic_hash": ""
   },
   "requirements.txt": {
-    "mtime": 1792343340.7148292,
-    "seen": 1793366765.2902884,
-    "ast_hash": "0b798a70a2cc48f0d9603107ac3d0114",
+    "mtime": 1793881864.805736,
+    "seen": 1793881867.4110363,
+    "ast_hash": "f8edc70d97594f85c8e10342595b8f6e",
     "semantic_hash": ""
   },
   "auth.py": {
-    "mtime": 1793370131.4872422,
-    "seen": 1793370271.1641176,
-    "ast_hash": "30aadc9983a3ae982e999edc8259f446",
+    "mtime": 1794153322.408385,
+    "seen": 1794153325.374395,
+    "ast_hash": "2f404c897dd96e3ed6a9436e469215f8",
     "semantic_hash": ""
   },
   ".vscode/settings.json": {
     "mtime": 1793790613.5259206,
     "seen": 1793793369.150749,
     "ast_hash": "5115535a13079892bfdf6ee9b7f9f29c",
+    "semantic_hash": ""
+  },
+  "ai_service.py": {
+    "mtime": 1793881864.805736,
+    "seen": 1793881867.4110217,
+    "ast_hash": "491c72018903af1df2800382cafa1abc",
+    "semantic_hash": ""
+  },
+  "vector_db.py": {
+    "mtime": 1794153322.4103818,
+    "seen": 1794153325.3744066,
+    "ast_hash": "de7764522a5c417ce70f196730f09a79",
+    "semantic_hash": ""
+  },
+  "vector_store.json": {
+    "mtime": 1794152919.9938672,
+    "seen": 1794153325.374409,
+    "ast_hash": "8b3d5abcee0034978c6a6690cb0152c0",
     "semantic_hash": ""
   }
 }
