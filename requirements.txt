@@ -20,3 +20,4 @@ pyjwt==2.15.1
 python-dotenv==1.2.4
 websockets==17.4
 slowapi==0.1.10
+pymongo==4.19.0
