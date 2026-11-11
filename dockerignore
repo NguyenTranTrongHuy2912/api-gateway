@@ -1,0 +1,13 @@
+venv
+.venv
+__pycache__
+*.pyc
+.git
+.vscode
+graphify-out
+README.md
+.env
+.env.*
+!.env.example
+# Chứa nội dung tin nhắn dạng văn bản, không đóng vào image; app tự tạo lại khi chạy
+vector_store.json
