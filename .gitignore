@@ -7,3 +7,5 @@ __pycache__/
 !.env.example
 seed_users.py
 *seed*.py
+graphify-out/*
+!graphify-out/graph.json
