@@ -39,13 +39,11 @@ def normalize_vn(text: str) -> str:
 JAVA_GRPC_TARGET = os.getenv("JAVA_GRPC_TARGET", "localhost:50051")
 GRPC_TIMEOUT = float(os.getenv("GRPC_TIMEOUT", "15.0"))  # seconds
 
-# Cloudinary (ảnh chat). API_SECRET chỉ nằm ở gateway, không bao giờ đưa vào app.
+# Cloudinary
 CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "")
 CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "")
 CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "")
 CLOUDINARY_FOLDER = os.getenv("CLOUDINARY_FOLDER", "chatapp").strip("/")
-# Cloudinary tự thu nhỏ ảnh khi nhận (áp dụng trước khi lưu), nên app không cần nén kích thước
-# Cloudinary tự thu nhỏ ảnh khi nhận (áp dụng trước khi lưu), nên app không cần nén kích thước
 IMAGE_INCOMING_TRANSFORMATION = "c_limit,w_1600,h_1600"
 
 from pymongo import MongoClient
@@ -889,6 +887,7 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
     stream = stub.SubscribeEvents(grpc_req)
 
     async def forward_grpc_to_ws():
+        ended_by_cancel = False
         try:
             async for event in stream:
                 event_type_name = "UNKNOWN"
@@ -918,6 +917,7 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                         "media_url": event.message.media_url,
                         "media_width": event.message.media_width,
                         "media_height": event.message.media_height,
+                        "media_duration_ms": event.message.media_duration_ms,
                     }
                 elif event.event_type == chat_pb2.EVENT_FRIEND_REQUEST:
                     payload["friend_request"] = {
@@ -931,11 +931,22 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                     payload["user_id"] = event.user_id
                 await websocket.send_json(payload)
         except asyncio.CancelledError:
-            pass
+            ended_by_cancel = True
         except grpc.RpcError as e:
-            log.warning("gRPC stream error for user %s: %s", user_id, e)
+            if e.code() != grpc.StatusCode.CANCELLED:
+                log.warning("gRPC stream error for user %s: %s", user_id, e)
         except Exception as e:
-            log.debug("Stream exception for user %s: %s", user_id, e)
+            log.warning("Stream exception for user %s: %s", user_id, e)
+        finally:
+            if not ended_by_cancel:
+                # Luồng sự kiện từ Java đã đứt (Java restart, Mongo lỗi, observer bị gỡ...). Nếu chỉ im lặng
+                # thì app vẫn tưởng WebSocket còn sống (ping/pong vẫn chạy) nhưng không bao giờ nhận được tin.
+                # Đóng WebSocket để app tự kết nối lại và đăng ký stream mới.
+                log.info("Event stream ended for user %s, closing WebSocket", user_id)
+                try:
+                    await websocket.close(code=1011)
+                except Exception:
+                    pass
 
     forward_task = asyncio.create_task(forward_grpc_to_ws())
 
