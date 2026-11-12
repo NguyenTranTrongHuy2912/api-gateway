@@ -125,8 +125,10 @@ def to_http_error(e: grpc.RpcError, expose_details: bool = False) -> HTTPExcepti
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # One shared channel for the whole app: no new connection handshake per request
-    channel = grpc.aio.insecure_channel(JAVA_GRPC_TARGET)
+    if JAVA_GRPC_TARGET.endswith(":443"):
+        channel = grpc.aio.secure_channel(JAVA_GRPC_TARGET, grpc.ssl_channel_credentials())
+    else:
+        channel = grpc.aio.insecure_channel(JAVA_GRPC_TARGET)
     app.state.stub = chat_pb2_grpc.ChatServiceStub(channel)
     app.state.auth_stub = chat_pb2_grpc.AuthServiceStub(channel)
     try:
