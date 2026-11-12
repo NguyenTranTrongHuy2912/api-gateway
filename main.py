@@ -26,6 +26,7 @@ from auth import create_token, decode_token, get_current_user, revoke_user_token
 from ai_service import generate_ai_reply, summarize_conversation, rewrite_message_text
 from security_ai import sanitize_pii
 from vector_db import vector_db
+from email_service import generate_and_save_otp, verify_otp_code, send_smtp_email, build_otp_html
 
 log = logging.getLogger("gateway")
 
@@ -310,16 +311,35 @@ async def root():
 @app.post("/api/v1/auth/request-otp")
 @limiter.limit("5/minute")
 async def request_otp(request: Request, payload: RequestOtpBody):
+    account_clean = payload.account.strip().lower()
+    if not account_clean or "@" not in account_clean:
+        raise HTTPException(status_code=400, detail="Địa chỉ email không hợp lệ.")
+
+    # 1. Kiểm tra email đã đăng ký chưa
+    if mongo_db is not None:
+        existing = mongo_db["users"].find_one({"account": account_clean})
+        if existing:
+            raise HTTPException(status_code=409, detail="Email này đã được đăng ký tài khoản. Vui lòng đăng nhập.")
+
+    # 2. Thử gọi gRPC RequestOtp
     try:
         resp = await request.app.state.auth_stub.RequestOtp(
-            chat_pb2.RequestOtpRequest(account=payload.account), timeout=GRPC_TIMEOUT
+            chat_pb2.RequestOtpRequest(account=account_clean), timeout=GRPC_TIMEOUT
         )
+        # Gửi thêm email thật qua Gmail SMTP để đảm bảo 100% người dùng nhận được mail
+        try:
+            generate_and_save_otp(mongo_db, account_clean, purpose="register")
+        except Exception:
+            pass
+        return {
+            "expires_in_seconds": resp.expires_in_seconds,
+            "resend_after_seconds": resp.resend_after_seconds,
+            "message": "Đã gửi mã xác thực OTP về email của bạn.",
+        }
     except grpc.RpcError as e:
-        raise to_http_error(e, expose_details=True)
-    return {
-        "expires_in_seconds": resp.expires_in_seconds,
-        "resend_after_seconds": resp.resend_after_seconds,
-    }
+        # Nếu gRPC thất bại (ví dụ gRPC backend chưa bật SMTP), dùng trực tiếp Python SMTP
+        log.warning("gRPC RequestOtp error: %s. Chuyển sang gửi trực tiếp qua Gateway SMTP", e)
+        return generate_and_save_otp(mongo_db, account_clean, purpose="register")
 
 
 @app.post("/api/v1/auth/forgot-password")
@@ -360,25 +380,56 @@ async def reset_password(request: Request, payload: ResetPasswordBody):
 
 @app.post("/api/v1/auth/register")
 async def register(payload: RegisterBody, request: Request):
+    account_clean = payload.account.strip().lower()
+    otp_clean = payload.otp_code.strip()
+
+    # Xác thực OTP qua MongoDB nếu có lưu
+    if mongo_db is not None:
+        verify_otp_code(mongo_db, account_clean, otp_clean, purpose="register")
+
     try:
         resp = await request.app.state.auth_stub.Register(
             chat_pb2.RegisterRequest(
-                account=payload.account,
+                account=account_clean,
                 password=payload.password,
-                display_name=payload.display_name,
-                otp_code=payload.otp_code,
+                display_name=payload.display_name.strip(),
+                otp_code=otp_clean,
             ),
             timeout=GRPC_TIMEOUT,
         )
+        role = get_user_role(resp.user_id, account_clean)
+        return {
+            "token": create_token(resp.user_id, role=role),
+            "user_id": resp.user_id,
+            "display_name": resp.display_name,
+            "role": role,
+        }
     except grpc.RpcError as e:
+        # Nếu gRPC thất bại nhưng OTP đã được verify thành công ở trên, tạo trực tiếp trong Mongo
+        if mongo_db is not None:
+            existing = mongo_db["users"].find_one({"account": account_clean})
+            if existing:
+                raise HTTPException(status_code=409, detail="Email này đã được đăng ký.")
+            new_id = str(uuid.uuid4())
+            hashed_pw = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
+            now_ms = int(time.time() * 1000)
+            mongo_db["users"].insert_one({
+                "_id": new_id,
+                "account": account_clean,
+                "password_hash": hashed_pw,
+                "display_name": payload.display_name.strip() or account_clean.split("@")[0],
+                "role": "USER",
+                "is_active": True,
+                "created_at": now_ms,
+            })
+            set_user_role(new_id, "USER")
+            return {
+                "token": create_token(new_id, role="USER"),
+                "user_id": new_id,
+                "display_name": payload.display_name.strip() or account_clean.split("@")[0],
+                "role": "USER",
+            }
         raise to_http_error(e, expose_details=True)
-    role = get_user_role(resp.user_id, payload.account)
-    return {
-        "token": create_token(resp.user_id, role=role),
-        "user_id": resp.user_id,
-        "display_name": resp.display_name,
-        "role": role,
-    }
 
 
 @app.post("/api/v1/auth/login")
@@ -535,11 +586,40 @@ async def update_user_status_admin(
         "updated_by": admin_id,
     }
 
+class AdminRequestOtpBody(BaseModel):
+    account: str
+    display_name: Optional[str] = ""
+
+
+@app.post("/api/v1/admin/request-otp")
+async def admin_request_otp(
+    payload: AdminRequestOtpBody,
+    admin_id: str = Depends(get_current_admin),
+):
+    """Admin yêu cầu gửi mã xác thực OTP về chính email của người dùng mới sắp được tạo."""
+    account_clean = payload.account.strip().lower()
+    if not account_clean or "@" not in account_clean:
+        raise HTTPException(status_code=400, detail="Email tài khoản không hợp lệ.")
+
+    if mongo_db is not None:
+        existing = mongo_db["users"].find_one({"account": account_clean})
+        if existing:
+            raise HTTPException(status_code=409, detail="Email này đã tồn tại trên hệ thống. Không thể tạo mới.")
+
+    return generate_and_save_otp(
+        mongo_db,
+        account_clean,
+        purpose="register",
+        display_name=payload.display_name or account_clean.split("@")[0],
+    )
+
+
 class CreateUserAdminBody(BaseModel):
     account: str
     password: str
     display_name: str
     role: Literal["ADMIN", "USER"] = "USER"
+    otp_code: str = Field(min_length=1, max_length=10)
 
 
 @app.post("/api/v1/admin/users")
@@ -548,17 +628,25 @@ async def create_user_admin(
     request: Request,
     admin_id: str = Depends(get_current_admin),
 ):
+    """Admin tạo người dùng mới - BẮT BUỘC PHẢI XÁC THỰC MÃ OTP ĐÃ GỬI VỀ CHÍNH EMAIL ĐÓ."""
     account_clean = payload.account.lower().strip()
+    otp_clean = payload.otp_code.strip()
+
     if not account_clean or "@" not in account_clean:
         raise HTTPException(status_code=400, detail="Email tài khoản không hợp lệ.")
     if not payload.password or len(payload.password) < 6:
         raise HTTPException(status_code=400, detail="Mật khẩu phải có ít nhất 6 ký tự.")
+    if not otp_clean:
+        raise HTTPException(status_code=400, detail="Vui lòng nhập mã xác thực OTP đã được gửi về email.")
 
-    # 1. Nếu có MongoDB, kiểm tra trùng và thêm trực tiếp
+    # 1. Bắt buộc kiểm tra mã OTP đã gửi về email
     if mongo_db is not None:
+        verify_otp_code(mongo_db, account_clean, otp_clean, purpose="register")
+
         existing = mongo_db["users"].find_one({"account": account_clean})
         if existing:
             raise HTTPException(status_code=400, detail="Tài khoản email này đã tồn tại trong hệ thống.")
+
         new_id = str(uuid.uuid4())
         hashed_pw = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
         now_ms = int(time.time() * 1000)
@@ -578,7 +666,7 @@ async def create_user_admin(
             "display_name": payload.display_name.strip() or account_clean.split("@")[0],
             "account": account_clean,
             "role": payload.role,
-            "message": "Tạo tài khoản người dùng thành công!",
+            "message": "Đã xác thực OTP và tạo tài khoản người dùng thành công!",
         }
 
     # 2. Hoặc fallback qua gRPC Register
@@ -588,7 +676,7 @@ async def create_user_admin(
                 account=account_clean,
                 password=payload.password,
                 display_name=payload.display_name.strip(),
-                otp_code="ADMIN_BYPASS",
+                otp_code=otp_clean,
             ),
             timeout=GRPC_TIMEOUT,
         )
@@ -599,7 +687,7 @@ async def create_user_admin(
             "display_name": resp.display_name,
             "account": account_clean,
             "role": payload.role,
-            "message": "Tạo tài khoản người dùng thành công!",
+            "message": "Đã xác thực OTP và tạo tài khoản người dùng thành công!",
         }
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
