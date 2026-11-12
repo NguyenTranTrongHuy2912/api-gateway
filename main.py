@@ -23,7 +23,8 @@ from fastapi.responses import JSONResponse
 import chat_pb2
 import chat_pb2_grpc
 from auth import create_token, decode_token, get_current_user, revoke_user_tokens, get_current_admin, get_user_role, set_user_role, USER_ROLES_STORE
-from ai_service import generate_ai_reply, summarize_conversation
+from ai_service import generate_ai_reply, summarize_conversation, rewrite_message_text
+from security_ai import sanitize_pii
 from vector_db import vector_db
 
 log = logging.getLogger("gateway")
@@ -653,6 +654,57 @@ async def sign_upload(
     }
 
 
+async def handle_in_room_ai_mention(room_id: str, prompt: str, user_id: str, stub):
+    """
+    Xử lý triệu hồi @HQ AI trực tiếp trong phòng chat nhóm / chat 1-1.
+    Tự động phân tích câu hỏi và gửi câu trả lời của HQ AI vào phòng cho cả nhóm cùng xem.
+    """
+    try:
+        await asyncio.sleep(0.6)  # Đợi 600ms để tin nhắn của người dùng hiện trước
+        clean_q = re.sub(r"(?i)@(hq\s*ai|hqai|ai|hq)", "", prompt).strip()
+        if not clean_q:
+            clean_q = "Chào HQ AI"
+
+        q_norm = normalize_vn(clean_q)
+        if any(k in q_norm for k in ["tom tat", "tóm tắt", "tong hop", "tổng hợp"]):
+            hist_resp = await stub.GetMessageHistory(
+                chat_pb2.HistoryRequest(room_id=room_id, limit=25, before_timestamp=0, user_id=user_id),
+                timeout=GRPC_TIMEOUT,
+            )
+            msgs = [
+                {
+                    "sender_id": m.sender_id,
+                    "sender_name": "Bạn" if m.sender_id == user_id else "Thành viên",
+                    "content": m.content,
+                    "timestamp": m.timestamp,
+                }
+                for m in reversed(hist_resp.messages)
+                if m.content and not m.content.startswith("🤖 [HQ AI]")
+            ]
+            reply_text = summarize_conversation("Phòng chat", msgs)
+        else:
+            reply_text = generate_ai_reply(clean_q)
+
+        full_content = f"🤖 [HQ AI]: {reply_text}"
+        ai_msg = chat_pb2.ChatMessage(
+            message_id=str(uuid.uuid4()),
+            room_id=room_id,
+            sender_id="hq_ai_bot",
+            content=full_content,
+            timestamp=int(time.time() * 1000),
+            type=chat_pb2.MESSAGE_TYPE_TEXT,
+        )
+        try:
+            await stub.SendMessage(ai_msg, timeout=GRPC_TIMEOUT)
+            await notify_new_message(room_id, "hq_ai_bot", full_content, "TEXT", stub)
+        except Exception:
+            ai_msg.sender_id = user_id
+            await stub.SendMessage(ai_msg, timeout=GRPC_TIMEOUT)
+            await notify_new_message(room_id, user_id, full_content, "TEXT", stub)
+    except Exception as e:
+        log.warning("handle_in_room_ai_mention failed: %s", e)
+
+
 # ------------------------------------------------------------------- Chat
 
 
@@ -690,6 +742,16 @@ async def send_message(
         msg_type=payload.type,
         stub=request.app.state.stub,
     ))
+
+    # Tự động triệu hồi HQ AI trong phòng nếu tin nhắn chứa tag @HQ AI
+    content_lower = (payload.content or "").lower()
+    if any(m in content_lower for m in ["@hq ai", "@hqai", "@ai", "@hq"]):
+        asyncio.create_task(handle_in_room_ai_mention(
+            room_id=payload.room_id,
+            prompt=payload.content,
+            user_id=user_id,
+            stub=request.app.state.stub,
+        ))
     if payload.content:
         try:
             vector_db.upsert(
@@ -1134,14 +1196,23 @@ async def change_password_logged_in(
 
 
 
-# ====================================================================== AI Endpoints (Google Gemini)
+# ====================================================================== AI Endpoints (HQ AI - Google Gemini)
+
+class AiChatHistoryItem(BaseModel):
+    role: str = "user"  # 'user' | 'model'
+    content: str = Field(min_length=1, max_length=4000)
 
 class AiChatBody(BaseModel):
-    prompt: str = Field(min_length=1, max_length=2000)
+    prompt: str = Field(min_length=1, max_length=4000)
+    history: Optional[list[AiChatHistoryItem]] = None
 
 class AiSummarizeBody(BaseModel):
     room_id: str
     limit: int = 30
+
+class AiRewriteBody(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    tone: Literal["formal", "friendly", "short", "english"] = "formal" 
 
 @app.post("/api/v1/ai/chat")
 async def ai_chat(
@@ -1260,12 +1331,28 @@ async def ai_chat(
         except Exception as db_err:
             log.warning("DB query for AI assistant failed: %s", db_err)
 
-    # 3. Câu hỏi chung
-    reply = generate_ai_reply(payload.prompt)
+    # 3. Câu hỏi chung & Đa năng (Multi-turn Context)
+    history_dicts = [item.model_dump() for item in payload.history] if payload.history else None
+    reply = generate_ai_reply(payload.prompt, history=history_dicts)
     return {
         "ok": True,
         "reply": reply,
-        "model": "gemini-1.5-flash",
+        "model": "HQ AI",
+    }
+
+
+@app.post("/api/v1/ai/rewrite")
+async def ai_rewrite_text(
+    payload: AiRewriteBody,
+    user_id: str = Depends(get_current_user),
+):
+    """Viết lại tin nhắn nháp (Formal, Friendly, Short, English)"""
+    rewritten = rewrite_message_text(payload.text, tone=payload.tone)
+    return {
+        "ok": True,
+        "original": payload.text,
+        "rewritten": rewritten,
+        "tone": payload.tone,
     }
 
 @app.post("/api/v1/ai/summarize")
