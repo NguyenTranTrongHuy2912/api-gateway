@@ -1015,49 +1015,99 @@ async def handle_in_room_ai_mention(room_id: str, prompt: str, user_id: str, stu
     """
     Xử lý triệu hồi @HQ AI trực tiếp trong phòng chat nhóm / chat 1-1.
     Tự động phân tích câu hỏi và gửi câu trả lời của HQ AI vào phòng cho cả nhóm cùng xem.
+    Hoàn toàn không chặn Event Loop, ghi trực tiếp DB và phát WebSocket tức thời.
     """
     try:
-        await asyncio.sleep(0.6)  # Đợi 600ms để tin nhắn của người dùng hiện trước
-        clean_q = re.sub(r"(?i)@(hq\s*ai|hqai|ai|hq)", "", prompt).strip()
+        await asyncio.sleep(0.3)  # Đợi 300ms để tin nhắn của người dùng hiện trước
+        clean_q = re.sub(r"(?i)@(hq\s*ai|hqai|ai|hq)[\s:,]?", "", prompt).strip()
         if not clean_q:
             clean_q = "Chào HQ AI"
 
         q_norm = normalize_vn(clean_q)
         if any(k in q_norm for k in ["tom tat", "tóm tắt", "tong hop", "tổng hợp"]):
-            hist_resp = await stub.GetMessageHistory(
-                chat_pb2.HistoryRequest(room_id=room_id, limit=25, before_timestamp=0, user_id=user_id),
-                timeout=GRPC_TIMEOUT,
-            )
-            msgs = [
-                {
-                    "sender_id": m.sender_id,
-                    "sender_name": "Bạn" if m.sender_id == user_id else "Thành viên",
-                    "content": m.content,
-                    "timestamp": m.timestamp,
-                }
-                for m in reversed(hist_resp.messages)
-                if m.content and not m.content.startswith("🤖 [HQ AI]")
-            ]
-            reply_text = summarize_conversation("Phòng chat", msgs)
+            msgs = []
+            if mongo_db is not None:
+                docs = list(mongo_db["messages"].find({"room_id": room_id}).sort("timestamp", -1).limit(30))
+                docs.reverse()
+                msgs = [
+                    {
+                        "sender_id": d.get("sender_id"),
+                        "sender_name": "Bạn" if d.get("sender_id") == user_id else ("HQ AI" if d.get("sender_id") == "hq_ai_bot" else "Thành viên"),
+                        "content": d.get("content", ""),
+                        "timestamp": d.get("timestamp", 0),
+                    }
+                    for d in docs
+                    if d.get("content") and not str(d.get("content")).startswith("🤖 [HQ AI]")
+                ]
+            else:
+                try:
+                    hist_resp = await stub.GetMessageHistory(
+                        chat_pb2.HistoryRequest(room_id=room_id, limit=25, before_timestamp=0, user_id=user_id),
+                        timeout=3.0,
+                    )
+                    msgs = [
+                        {
+                            "sender_id": m.sender_id,
+                            "sender_name": "Bạn" if m.sender_id == user_id else "Thành viên",
+                            "content": m.content,
+                            "timestamp": m.timestamp,
+                        }
+                        for m in reversed(hist_resp.messages)
+                        if m.content and not m.content.startswith("🤖 [HQ AI]")
+                    ]
+                except Exception:
+                    msgs = []
+            reply_text = await asyncio.to_thread(summarize_conversation, "Phòng chat", msgs)
         else:
-            reply_text = generate_ai_reply(clean_q)
+            reply_text = await asyncio.to_thread(generate_ai_reply, clean_q)
 
+        now_ms = int(time.time() * 1000)
+        bot_msg_id = str(uuid.uuid4())
         full_content = f"🤖 [HQ AI]: {reply_text}"
-        ai_msg = chat_pb2.ChatMessage(
-            message_id=str(uuid.uuid4()),
-            room_id=room_id,
-            sender_id="hq_ai_bot",
-            content=full_content,
-            timestamp=int(time.time() * 1000),
-            type=chat_pb2.MESSAGE_TYPE_TEXT,
-        )
-        try:
-            await stub.SendMessage(ai_msg, timeout=GRPC_TIMEOUT)
-            await notify_new_message(room_id, "hq_ai_bot", full_content, "TEXT", stub)
-        except Exception:
-            ai_msg.sender_id = user_id
-            await stub.SendMessage(ai_msg, timeout=GRPC_TIMEOUT)
-            await notify_new_message(room_id, user_id, full_content, "TEXT", stub)
+
+        if mongo_db is not None:
+            # 1. Đảm bảo bot account tồn tại trong DB
+            mongo_db["users"].update_one(
+                {"_id": "hq_ai_bot"},
+                {"$setOnInsert": {
+                    "account": "hq.ai.bot@chatapp.system",
+                    "display_name": "HQ AI 🤖",
+                    "avatar_url": "https://api.dicebear.com/7.x/bottts/png?seed=HQAI",
+                    "role": "USER",
+                    "is_active": True,
+                    "created_at": now_ms,
+                }},
+                upsert=True
+            )
+            # 2. Đảm bảo bot có trong thành viên phòng
+            mongo_db["rooms"].update_one(
+                {"_id": room_id},
+                {"$addToSet": {"member_ids": "hq_ai_bot"}}
+            )
+            # 3. Lưu tin nhắn trực tiếp vào DB
+            mongo_db["messages"].insert_one({
+                "_id": bot_msg_id,
+                "room_id": room_id,
+                "sender_id": "hq_ai_bot",
+                "content": full_content,
+                "timestamp": now_ms,
+                "type": "TEXT",
+            })
+            # 4. Cập nhật last_message cho phòng
+            mongo_db["rooms"].update_one(
+                {"_id": room_id},
+                {"$set": {
+                    "last_message": {
+                        "content": full_content,
+                        "sender_id": "hq_ai_bot",
+                        "timestamp": now_ms,
+                    },
+                    "last_message_at": now_ms,
+                }}
+            )
+
+        # 5. Phát WebSocket tức thì
+        await notify_new_message(room_id, "hq_ai_bot", full_content, "TEXT", stub)
     except Exception as e:
         log.warning("handle_in_room_ai_mention failed: %s", e)
 
