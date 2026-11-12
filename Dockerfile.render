@@ -1,0 +1,52 @@
+# Dockerfile.render  (đặt ở thư mục gốc của repo api-gateway)
+# Gộp Java gRPC backend + FastAPI gateway vào MỘT service Render.
+# Repo java-grpc-backend được clone lúc build, nên hai repo vẫn tách riêng.
+
+# ---------- Stage 1: clone + build Java backend ----------
+FROM maven:3.9-eclipse-temurin-21 AS java-build
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/*
+
+# Repo public: giữ nguyên. Repo private: đặt JAVA_REPO_URL trong Environment của Render
+# dạng https://<token>@github.com/NguyenTranTrongHuy2912/java-grpc-backend.git
+ARG JAVA_REPO_URL=https://github.com/NguyenTranTrongHuy2912/java-grpc-backend.git
+ARG JAVA_REPO_REF=main
+
+WORKDIR /build
+RUN git clone --depth 1 --branch "${JAVA_REPO_REF}" "${JAVA_REPO_URL}" .
+
+RUN mvn -B -q dependency:resolve
+RUN mvn -B -q package -DskipTests \
+ && mvn -B -q dependency:copy-dependencies -DoutputDirectory=target/lib -DincludeScope=runtime
+
+# ---------- Stage 2: Python gateway + Java runtime ----------
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    JAVA_HOME=/opt/java/openjdk
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+COPY --from=eclipse-temurin:21-jre /opt/java/openjdk ${JAVA_HOME}
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY --from=java-build /build/target/classes /app/java/classes
+COPY --from=java-build /build/target/lib /app/java/lib
+
+COPY . /app/
+
+# sed: bỏ ký tự CRLF của Windows, nếu không script sẽ không chạy được trên Linux
+RUN sed -i 's/\r$//' /app/start.sh \
+ && chmod +x /app/start.sh \
+ && useradd --create-home appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 10000
+CMD ["/app/start.sh"]
