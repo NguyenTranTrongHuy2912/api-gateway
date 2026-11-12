@@ -5,8 +5,8 @@ from typing import Optional
 import jwt
 from fastapi import Header, HTTPException
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
-# Set before starting the gateway, e.g. PowerShell: $env:JWT_SECRET = "<long random string>"
 load_dotenv()
 JWT_SECRET = os.environ.get("JWT_SECRET", "3277e7cd0687955793ee1c5b4980cb16c3d7284d9c5975411e541f89f8169199")
 JWT_ALGO = "HS256"
@@ -24,22 +24,71 @@ DEFAULT_ADMIN_EMAILS = {
     "nguyenvanquoc20055@gmail.com",
 }
 
-# In-memory role store: user_id -> "ADMIN" | "USER"
+# Cache in-memory để tăng tốc đọc: user_id -> "ADMIN" | "USER"
 USER_ROLES_STORE: dict[str, str] = {}
+
+# Kết nối MongoDB Atlas để lưu trữ Role vĩnh viễn không bị mất khi restart server
+MONGO_URI = os.getenv("MONGO_URI", "").strip()
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "chat_db")
+_auth_mongo_db = None
+if MONGO_URI:
+    try:
+        _client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=4000)
+        _auth_mongo_db = _client[MONGO_DB_NAME]
+    except Exception:
+        pass
 
 
 def set_user_role(user_id: str, role: str) -> None:
-    """Cập nhật quyền của người dùng trong hệ thống (ADMIN hoặc USER)."""
-    USER_ROLES_STORE[user_id] = "ADMIN" if role.upper() == "ADMIN" else "USER"
+    """Cập nhật quyền của người dùng trong hệ thống và đồng bộ vĩnh viễn vào MongoDB Atlas."""
+    norm_role = "ADMIN" if role.upper() == "ADMIN" else "USER"
+    USER_ROLES_STORE[user_id] = norm_role
+
+    # Lưu vĩnh viễn vào MongoDB Atlas
+    if _auth_mongo_db is not None:
+        try:
+            _auth_mongo_db["users"].update_one(
+                {"_id": user_id},
+                {"$set": {"role": norm_role}}
+            )
+        except Exception:
+            pass
 
 
 def get_user_role(user_id: str, account_email: str = "") -> str:
-    """Lấy role của người dùng, tự động cấp quyền ADMIN nếu nằm trong danh sách admin cấu hình."""
+    """
+    Lấy role của người dùng.
+    Ưu tiên: Cache RAM -> Database MongoDB Atlas -> DEFAULT_ADMIN_EMAILS -> Default USER.
+    """
+    # 1. Kiểm tra cache RAM
     if user_id in USER_ROLES_STORE:
         return USER_ROLES_STORE[user_id]
-    if account_email and account_email.lower().strip() in DEFAULT_ADMIN_EMAILS:
+
+    clean_email = account_email.lower().strip() if account_email else ""
+
+    # 2. Kiểm tra trực tiếp từ MongoDB Atlas
+    if _auth_mongo_db is not None and user_id:
+        try:
+            user_doc = _auth_mongo_db["users"].find_one({"_id": user_id}, {"role": 1, "account": 1})
+            if user_doc:
+                db_role = user_doc.get("role")
+                db_account = (user_doc.get("account") or "").lower().strip()
+                if not clean_email and db_account:
+                    clean_email = db_account
+
+                if db_role in ("ADMIN", "USER"):
+                    USER_ROLES_STORE[user_id] = db_role
+                    return db_role
+        except Exception:
+            pass
+
+    # 3. Kiểm tra danh sách Admin mặc định
+    if clean_email and clean_email in DEFAULT_ADMIN_EMAILS:
         USER_ROLES_STORE[user_id] = "ADMIN"
         return "ADMIN"
+
+    # Mặc định là USER thông thường
+    USER_ROLES_STORE[user_id] = "USER"
     return "USER"
 
 
@@ -98,15 +147,19 @@ def get_current_admin(authorization: str = Header(default="")) -> str:
 
         revoked_at = REVOCATION_TIMESTAMPS.get(user_id, 0)
         if revoked_at > 0 and token_iat < revoked_at:
-            raise HTTPException(status_code=401, detail="Phiên đăng nhập đã hết hạn.")
+            raise HTTPException(
+                status_code=401,
+                detail="Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
+            )
 
-        # Kiểm tra quyền Admin từ token hoặc store
-        actual_role = USER_ROLES_STORE.get(user_id, role)
-        if actual_role != "ADMIN":
+        # Kiểm tra thêm quyền thực tế trong Database/RAM
+        real_role = get_user_role(user_id)
+        if role != "ADMIN" and real_role != "ADMIN":
             raise HTTPException(
                 status_code=403,
-                detail="Quyền truy cập bị từ chối: Yêu cầu quyền Quản trị viên (Admin).",
+                detail="Bạn không có quyền Quản trị viên (ADMIN) để thực hiện thao tác này.",
             )
+
         return user_id
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -114,8 +167,10 @@ def get_current_admin(authorization: str = Header(default="")) -> str:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-def decode_token(token: str):
-    """Decodes a JWT and returns user_id, or None if invalid/expired/revoked."""
+def decode_token(token: str) -> Optional[dict]:
+    """Giải mã token không ném exception, trả về None nếu lỗi hoặc token bị thu hồi."""
+    if not token:
+        return None
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
         user_id = payload.get("sub")
@@ -125,6 +180,6 @@ def decode_token(token: str):
         if revoked_at > 0 and token_iat < revoked_at:
             return None
 
-        return user_id
-    except Exception:
+        return payload
+    except jwt.PyJWTError:
         return None

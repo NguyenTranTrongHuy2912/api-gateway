@@ -848,6 +848,107 @@ async def create_room(
     return room_to_dict(resp)
 
 
+
+
+class AddRoomMembersBody(BaseModel):
+    member_ids: list[str]
+
+
+class UpdateRoomNameBody(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+@app.post("/api/v1/rooms/{room_id}/leave")
+async def leave_room(
+    room_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Người dùng rời khỏi phòng chat nhóm - Cập nhật dữ liệu thật trong MongoDB Atlas."""
+    if mongo_db is not None:
+        room = mongo_db["rooms"].find_one({"_id": room_id})
+        if not room:
+            raise HTTPException(status_code=404, detail="Không tìm thấy phòng chat.")
+
+        members = room.get("member_ids", [])
+        if user_id not in members:
+            return {"ok": True, "room_id": room_id, "message": "Bạn không còn trong phòng chat này."}
+
+        # Xóa user_id khỏi danh sách thành viên
+        mongo_db["rooms"].update_one(
+            {"_id": room_id},
+            {"$pull": {"member_ids": user_id}}
+        )
+
+        # Lấy tên hiển thị của người rời nhóm
+        user_doc = mongo_db["users"].find_one({"_id": user_id})
+        display_name = user_doc.get("display_name", "Một thành viên") if user_doc else "Một thành viên"
+
+        # Thêm tin nhắn hệ thống thông báo người dùng rời nhóm
+        sys_msg_id = str(uuid.uuid4())
+        now_ms = int(time.time() * 1000)
+        mongo_db["messages"].insert_one({
+            "_id": sys_msg_id,
+            "room_id": room_id,
+            "sender_id": "system",
+            "content": f"{display_name} đã rời khỏi nhóm.",
+            "timestamp": now_ms,
+            "type": "TEXT",
+        })
+
+        # Cập nhật last_message của phòng
+        mongo_db["rooms"].update_one(
+            {"_id": room_id},
+            {"$set": {
+                "last_message_content": f"{display_name} đã rời khỏi nhóm.",
+                "last_message_sender_id": "system",
+                "last_message_timestamp": now_ms,
+            }}
+        )
+
+        # Broadcast sự kiện WebSocket
+        asyncio.create_task(broadcast_ws_event({
+            "type": "ROOM_UPDATED",
+            "room_id": room_id,
+            "timestamp": now_ms,
+        }))
+
+        return {"ok": True, "room_id": room_id, "message": "Bạn đã rời khỏi nhóm thành công."}
+
+    return {"ok": True, "room_id": room_id, "message": "Bạn đã rời nhóm."}
+
+
+@app.post("/api/v1/rooms/{room_id}/members")
+async def add_room_members(
+    room_id: str,
+    payload: AddRoomMembersBody,
+    user_id: str = Depends(get_current_user),
+):
+    """Thêm thành viên vào phòng chat nhóm."""
+    if mongo_db is not None:
+        mongo_db["rooms"].update_one(
+            {"_id": room_id},
+            {"$addToSet": {"member_ids": {"$each": payload.member_ids}}}
+        )
+        return {"ok": True, "room_id": room_id, "added_count": len(payload.member_ids)}
+    return {"ok": True, "room_id": room_id}
+
+
+@app.patch("/api/v1/rooms/{room_id}/name")
+async def update_room_name(
+    room_id: str,
+    payload: UpdateRoomNameBody,
+    user_id: str = Depends(get_current_user),
+):
+    """Cập nhật tên nhóm chat."""
+    clean_name = payload.name.strip()
+    if mongo_db is not None:
+        mongo_db["rooms"].update_one(
+            {"_id": room_id},
+            {"$set": {"name": clean_name}}
+        )
+        return {"ok": True, "room_id": room_id, "new_name": clean_name}
+    return {"ok": True, "room_id": room_id, "new_name": clean_name}
 @app.post("/api/v1/rooms/{room_id}/read")
 async def mark_room_read(
     room_id: str,
