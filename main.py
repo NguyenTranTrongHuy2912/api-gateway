@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 
 import chat_pb2
 import chat_pb2_grpc
-from auth import create_token, decode_token, get_current_user, revoke_user_tokens, get_current_admin, get_user_role, set_user_role, USER_ROLES_STORE
+from auth import create_token, decode_token, get_current_user, revoke_user_tokens, get_current_admin, get_user_role, set_user_role, USER_ROLES_STORE, DEFAULT_ADMIN_EMAILS
 from ai_service import generate_ai_reply, summarize_conversation, rewrite_message_text
 from security_ai import sanitize_pii
 from vector_db import vector_db
@@ -49,15 +49,16 @@ IMAGE_INCOMING_TRANSFORMATION = "c_limit,w_1600,h_1600"
 
 from pymongo import MongoClient
 
-MONGO_URI = os.getenv("MONGO_URI", "")
+MONGO_URI = os.getenv("MONGO_URI", "").strip()
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "chat_db")
 mongo_db = None
-try:
-    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-    mongo_db = mongo_client[MONGO_DB_NAME]
-    log.info("Admin MongoDB connected successfully")
-except Exception as e:
-    log.warning("Admin MongoDB connection error: %s", e)
+if MONGO_URI:
+    try:
+        mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        mongo_db = mongo_client[MONGO_DB_NAME]
+        log.info("Admin MongoDB connected successfully")
+    except Exception as e:
+        log.warning("Admin MongoDB connection error: %s", e)
 
 
 def is_own_image_url(url: str) -> bool:
@@ -526,30 +527,189 @@ async def update_user_status_admin(
         "updated_by": admin_id,
     }
 
+class CreateUserAdminBody(BaseModel):
+    account: str
+    password: str
+    display_name: str
+    role: Literal["ADMIN", "USER"] = "USER"
+
+
+@app.post("/api/v1/admin/users")
+async def create_user_admin(
+    payload: CreateUserAdminBody,
+    request: Request,
+    admin_id: str = Depends(get_current_admin),
+):
+    account_clean = payload.account.lower().strip()
+    if not account_clean or "@" not in account_clean:
+        raise HTTPException(status_code=400, detail="Email tài khoản không hợp lệ.")
+    if not payload.password or len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Mật khẩu phải có ít nhất 6 ký tự.")
+
+    # 1. Nếu có MongoDB, kiểm tra trùng và thêm trực tiếp
+    if mongo_db is not None:
+        existing = mongo_db["users"].find_one({"account": account_clean})
+        if existing:
+            raise HTTPException(status_code=400, detail="Tài khoản email này đã tồn tại trong hệ thống.")
+        new_id = str(uuid.uuid4())
+        hashed_pw = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
+        now_ms = int(time.time() * 1000)
+        mongo_db["users"].insert_one({
+            "_id": new_id,
+            "account": account_clean,
+            "password_hash": hashed_pw,
+            "display_name": payload.display_name.strip() or account_clean.split("@")[0],
+            "role": payload.role,
+            "is_active": True,
+            "created_at": now_ms,
+        })
+        set_user_role(new_id, payload.role)
+        return {
+            "ok": True,
+            "user_id": new_id,
+            "display_name": payload.display_name.strip() or account_clean.split("@")[0],
+            "account": account_clean,
+            "role": payload.role,
+            "message": "Tạo tài khoản người dùng thành công!",
+        }
+
+    # 2. Hoặc fallback qua gRPC Register
+    try:
+        resp = await request.app.state.auth_stub.Register(
+            chat_pb2.RegisterRequest(
+                account=account_clean,
+                password=payload.password,
+                display_name=payload.display_name.strip(),
+                otp_code="ADMIN_BYPASS",
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+        set_user_role(resp.user_id, payload.role)
+        return {
+            "ok": True,
+            "user_id": resp.user_id,
+            "display_name": resp.display_name,
+            "account": account_clean,
+            "role": payload.role,
+            "message": "Tạo tài khoản người dùng thành công!",
+        }
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+
+
+@app.delete("/api/v1/admin/users/{target_user_id}")
+async def delete_user_admin(
+    target_user_id: str,
+    admin_id: str = Depends(get_current_admin),
+):
+    if target_user_id == admin_id:
+        raise HTTPException(status_code=400, detail="Không thể xóa tài khoản của chính mình.")
+    if mongo_db is not None:
+        mongo_db["users"].delete_one({"_id": target_user_id})
+    return {"ok": True, "user_id": target_user_id, "message": "Đã xóa tài khoản thành công."}
+
 # ------------------------------------------------------------------ Users
 
 
 @app.get("/api/v1/users/search")
 async def search_users(
     request: Request,
-    q: str = Query(..., min_length=2, max_length=100),
+    q: str = Query(default="", max_length=100),
     limit: int = Query(10, ge=1, le=20),
     user_id: str = Depends(get_current_user),
 ):
+    q_clean = q.strip()
+    if len(q_clean) < 2:
+        return {"users": []}
+
     try:
         resp = await request.app.state.stub.SearchUsers(
-            chat_pb2.SearchUsersRequest(requester_id=user_id, query=q, limit=limit),
+            chat_pb2.SearchUsersRequest(requester_id=user_id, query=q_clean, limit=limit),
             timeout=GRPC_TIMEOUT,
         )
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
 
-    return {
-        "users": [
-            {"user_id": u.user_id, "display_name": u.display_name, "email": u.email}
-            for u in resp.users
-        ]
-    }
+    requester_role = get_user_role(user_id)
+    filtered = []
+    for u in resp.users:
+        if u.user_id == user_id:
+            continue
+        u_email = (u.email or "").lower().strip()
+        # Bảo mật: Người dùng thông thường KHÔNG ĐƯỢC nhìn thấy tài khoản của ADMIN
+        if requester_role != "ADMIN":
+            if u_email in DEFAULT_ADMIN_EMAILS or get_user_role(u.user_id, u_email) == "ADMIN":
+                continue
+            if mongo_db is not None:
+                admin_check = mongo_db["users"].find_one({"_id": u.user_id, "role": "ADMIN"})
+                if admin_check:
+                    continue
+        filtered.append({
+            "user_id": u.user_id,
+            "display_name": u.display_name,
+            "email": u.email,
+        })
+
+    return {"users": filtered}
+
+
+@app.get("/api/v1/users/suggestions")
+async def get_user_suggestions(
+    request: Request,
+    limit: int = Query(10, ge=1, le=20),
+    user_id: str = Depends(get_current_user),
+):
+    """Gợi ý bạn bè phù hợp. Tuyệt đối ẩn danh tính và tài khoản Admin khỏi người dùng thường."""
+    requester_role = get_user_role(user_id)
+    users_list = []
+
+    # 1. Thử lấy từ MongoDB
+    if mongo_db is not None:
+        try:
+            query = {"_id": {"$ne": user_id}, "is_active": {"$ne": False}}
+            if requester_role != "ADMIN":
+                query["role"] = {"$ne": "ADMIN"}
+                query["account"] = {"$nin": list(DEFAULT_ADMIN_EMAILS)}
+
+            docs = mongo_db["users"].find(query, {"password_hash": 0}).limit(limit)
+            for d in docs:
+                acc = d.get("account", "")
+                if requester_role != "ADMIN" and acc.lower() in DEFAULT_ADMIN_EMAILS:
+                    continue
+                users_list.append({
+                    "user_id": str(d.get("_id", "")),
+                    "display_name": d.get("display_name", "") or acc.split("@")[0],
+                    "email": acc,
+                })
+            if users_list:
+                return {"users": users_list}
+        except Exception as e:
+            log.warning("User suggestions from mongo error: %s", e)
+
+    # 2. Fallback: Dùng search gRPC
+    try:
+        resp = await request.app.state.stub.SearchUsers(
+            chat_pb2.SearchUsersRequest(requester_id=user_id, query="user", limit=limit * 2),
+            timeout=GRPC_TIMEOUT,
+        )
+        for u in resp.users:
+            if u.user_id == user_id:
+                continue
+            u_email = (u.email or "").lower().strip()
+            if requester_role != "ADMIN":
+                if u_email in DEFAULT_ADMIN_EMAILS or get_user_role(u.user_id, u_email) == "ADMIN":
+                    continue
+            users_list.append({
+                "user_id": u.user_id,
+                "display_name": u.display_name,
+                "email": u.email,
+            })
+            if len(users_list) >= limit:
+                break
+    except Exception:
+        pass
+
+    return {"users": users_list}
 
 
 # ------------------------------------------------------------------ Rooms
@@ -1050,6 +1210,23 @@ async def send_friend_request(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
+    # Bảo mật: Người dùng thường không thể gửi kết bạn đến tài khoản ADMIN
+    requester_role = get_user_role(user_id)
+    if requester_role != "ADMIN":
+        target_role = get_user_role(payload.receiver_id)
+        if target_role == "ADMIN":
+            raise HTTPException(
+                status_code=403,
+                detail="Không thể gửi yêu cầu kết bạn đến tài khoản Quản trị viên hệ thống."
+            )
+        if mongo_db is not None:
+            target_doc = mongo_db["users"].find_one({"_id": payload.receiver_id})
+            if target_doc:
+                if target_doc.get("role") == "ADMIN" or target_doc.get("account", "").lower() in DEFAULT_ADMIN_EMAILS:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Không thể gửi yêu cầu kết bạn đến tài khoản Quản trị viên hệ thống."
+                    )
     try:
         resp = await request.app.state.stub.SendFriendRequest(
             chat_pb2.SendFriendRequestReq(sender_id=user_id, receiver_id=payload.receiver_id),
