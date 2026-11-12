@@ -22,7 +22,6 @@ DEFAULT_ADMIN_EMAILS = {
     "quoc05@gmail.com",
     "admin@iuh.edu.vn",
     "nguyenvanquoc20055@gmail.com",
-    "nguyenvanquoclt1@gmail.com",
 }
 
 # In-memory role store: user_id -> "ADMIN" | "USER"

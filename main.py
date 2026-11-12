@@ -57,6 +57,14 @@ if MONGO_URI:
         mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
         mongo_db = mongo_client[MONGO_DB_NAME]
         log.info("Admin MongoDB connected successfully")
+        # Đảm bảo tài khoản nguyenvanquoclt1@gmail.com có vai trò USER theo yêu cầu
+        try:
+            mongo_db["users"].update_many(
+                {"account": "nguyenvanquoclt1@gmail.com"},
+                {"$set": {"role": "USER"}}
+            )
+        except Exception:
+            pass
     except Exception as e:
         log.warning("Admin MongoDB connection error: %s", e)
 
