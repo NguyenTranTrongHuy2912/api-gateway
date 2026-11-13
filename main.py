@@ -1224,6 +1224,190 @@ async def get_history(
 active_user_connections: dict[str, set[WebSocket]] = {}
 user_last_seen: dict[str, int] = {}
 user_push_tokens: dict[str, str] = {}
+active_calls: dict[str, dict] = {}
+
+
+async def send_ws_to_user(target_user_id: str, payload: dict) -> bool:
+    """Gửi trực tiếp sự kiện WebSocket tới tất cả các kết nối của một người dùng"""
+    connections = active_user_connections.get(target_user_id, set())
+    if not connections:
+        return False
+    delivered = False
+    for ws in list(connections):
+        try:
+            await ws.send_json(payload)
+            delivered = True
+        except Exception:
+            pass
+    return delivered
+
+
+async def record_call_history_message(room_id: str, sender_id: str, content: str, stub):
+    """Ghi lại lịch sử cuộc gọi vào MongoDB và phát WebSocket tới cả phòng"""
+    now_ms = int(time.time() * 1000)
+    call_msg_id = str(uuid.uuid4())
+    if mongo_db is not None:
+        try:
+            mongo_db["messages"].insert_one({
+                "_id": call_msg_id,
+                "room_id": room_id,
+                "sender_id": sender_id,
+                "content": content,
+                "timestamp": now_ms,
+                "type": "TEXT",
+            })
+            mongo_db["rooms"].update_one(
+                {"_id": room_id},
+                {"$set": {
+                    "last_message": {
+                        "content": content,
+                        "sender_id": sender_id,
+                        "timestamp": now_ms,
+                    },
+                    "last_message_at": now_ms,
+                }}
+            )
+        except Exception as e:
+            log.warning("Could not record call message to Mongo: %s", e)
+
+    # Phát sự kiện NEW_MESSAGE qua WebSocket
+    await notify_new_message(room_id, sender_id, content, "TEXT", stub)
+
+
+async def handle_call_signal(ws: WebSocket, sender_user_id: str, data: dict, stub):
+    """Xử lý điều phối tín hiệu WebRTC (Signaling) và ghi nhận trạng thái cuộc gọi"""
+    msg_type = data.get("type")
+    call_id = data.get("call_id") or str(uuid.uuid4())
+    receiver_id = data.get("receiver_id")
+    room_id = data.get("room_id")
+    call_type = data.get("call_type", "audio")
+
+    if msg_type == "CALL_OFFER":
+        is_online = receiver_id in active_user_connections and len(active_user_connections[receiver_id]) > 0
+        if not is_online:
+            await ws.send_json({
+                "type": "CALL_UNAVAILABLE",
+                "call_id": call_id,
+                "receiver_id": receiver_id,
+                "reason": "offline",
+                "message": "Người dùng hiện không trực tuyến."
+            })
+            if room_id:
+                call_label = "📞 Cuộc gọi thoại nhỡ" if call_type == "audio" else "📹 Cuộc gọi video nhỡ"
+                await record_call_history_message(room_id, sender_user_id, f"❌ {call_label}", stub)
+            return
+
+        active_calls[call_id] = {
+            "caller_id": sender_user_id,
+            "receiver_id": receiver_id,
+            "room_id": room_id,
+            "call_type": call_type,
+            "caller_name": data.get("caller_name", "Người dùng"),
+            "caller_avatar": data.get("caller_avatar", ""),
+            "status": "ringing",
+            "created_at": time.time(),
+            "start_time": None,
+        }
+
+        await send_ws_to_user(receiver_id, {
+            "type": "CALL_OFFER",
+            "call_id": call_id,
+            "caller_id": sender_user_id,
+            "caller_name": data.get("caller_name", "Người dùng"),
+            "caller_avatar": data.get("caller_avatar", ""),
+            "receiver_id": receiver_id,
+            "room_id": room_id,
+            "call_type": call_type,
+            "sdp": data.get("sdp"),
+            "timestamp": int(time.time() * 1000),
+        })
+
+    elif msg_type == "CALL_ANSWER":
+        caller_id = data.get("caller_id")
+        accepted = data.get("accepted", False)
+        call_info = active_calls.get(call_id)
+
+        if accepted:
+            if call_info:
+                call_info["status"] = "connected"
+                call_info["start_time"] = time.time()
+            await send_ws_to_user(caller_id, {
+                "type": "CALL_ANSWER",
+                "call_id": call_id,
+                "accepted": True,
+                "responder_id": sender_user_id,
+                "sdp": data.get("sdp"),
+                "timestamp": int(time.time() * 1000),
+            })
+        else:
+            if call_info and call_info.get("room_id"):
+                r_id = call_info["room_id"]
+                c_type = call_info.get("call_type", "audio")
+                call_label = "Cuộc gọi thoại bị từ chối" if c_type == "audio" else "Cuộc gọi video bị từ chối"
+                await record_call_history_message(r_id, caller_id, f"🚫 {call_label}", stub)
+            active_calls.pop(call_id, None)
+
+            await send_ws_to_user(caller_id, {
+                "type": "CALL_HANGUP",
+                "call_id": call_id,
+                "reason": "declined",
+                "message": "Người nhận đã từ chối cuộc gọi."
+            })
+
+    elif msg_type == "ICE_CANDIDATE":
+        target_id = data.get("target_id") or receiver_id
+        if target_id:
+            await send_ws_to_user(target_id, {
+                "type": "ICE_CANDIDATE",
+                "call_id": call_id,
+                "sender_id": sender_user_id,
+                "candidate": data.get("candidate"),
+            })
+
+    elif msg_type == "CALL_HANGUP":
+        call_info = active_calls.pop(call_id, None)
+        other_user_id = data.get("target_id")
+        reason = data.get("reason", "ended")
+        duration = data.get("duration_seconds", 0)
+
+        if not other_user_id and call_info:
+            other_user_id = call_info["receiver_id"] if sender_user_id == call_info["caller_id"] else call_info["caller_id"]
+
+        if other_user_id:
+            await send_ws_to_user(other_user_id, {
+                "type": "CALL_HANGUP",
+                "call_id": call_id,
+                "reason": reason,
+                "duration_seconds": duration,
+                "message": "Cuộc gọi đã kết thúc."
+            })
+
+        curr_room_id = room_id or (call_info.get("room_id") if call_info else None)
+        c_type = call_type or (call_info.get("call_type") if call_info else "audio")
+        caller_id = (call_info.get("caller_id") if call_info else None) or sender_user_id
+
+        if curr_room_id:
+            if duration > 0:
+                mins = duration // 60
+                secs = duration % 60
+                time_str = f"{mins:02d}:{secs:02d}"
+                call_icon = "📞 Cuộc gọi thoại" if c_type == "audio" else "📹 Cuộc gọi video"
+                content = f"{call_icon} ({time_str})"
+                await record_call_history_message(curr_room_id, caller_id, content, stub)
+            elif reason in ("canceled", "timeout", "offline"):
+                call_icon = "📞 Cuộc gọi thoại nhỡ" if c_type == "audio" else "📹 Cuộc gọi video nhỡ"
+                content = f"❌ {call_icon}"
+                await record_call_history_message(curr_room_id, caller_id, content, stub)
+
+    elif msg_type == "CALL_BUSY":
+        target_id = data.get("target_id")
+        if target_id:
+            await send_ws_to_user(target_id, {
+                "type": "CALL_BUSY",
+                "call_id": call_id,
+                "message": "Người dùng đang có cuộc gọi khác."
+            })
+
 
 
 async def broadcast_ws_event(payload: dict):
@@ -1426,6 +1610,13 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
             text = await websocket.receive_text()
             if text == "ping":
                 await websocket.send_text("pong")
+                continue
+            try:
+                msg_data = json.loads(text)
+                if isinstance(msg_data, dict) and msg_data.get("type", "").startswith("CALL_"):
+                    await handle_call_signal(websocket, user_id, msg_data, stub)
+            except Exception as e:
+                log.debug("WS incoming parse error: %s", e)
     except WebSocketDisconnect:
         log.info("WebSocket disconnected: user_id=%s", user_id)
     except Exception as e:
