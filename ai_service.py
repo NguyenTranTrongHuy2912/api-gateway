@@ -24,11 +24,21 @@ from typing import Dict, List, Optional
 
 from security_ai import sanitize_pii, wrap_secure_context
 
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
 log = logging.getLogger("gateway.ai")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+
+CANDIDATE_MODELS = [
+    GEMINI_MODEL,
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.5-flash-lite",
+]
 
 HQ_AI_SYSTEM_INSTRUCTION = (
     "Bạn là HQ AI 🤖✨ — Trợ lý trí tuệ nhân tạo thông minh, hiện đại, thân thiện và chuyên nghiệp được tích hợp trong ứng dụng ChatApp.\n"
@@ -51,13 +61,11 @@ def call_gemini_api(
     system_instruction: str = HQ_AI_SYSTEM_INSTRUCTION,
 ) -> str:
     """
-    Gọi trực tiếp Google Gemini REST API hỗ trợ Multi-turn Conversation
+    Gọi trực tiếp Google Gemini REST API hỗ trợ Multi-turn Conversation & tự động fallback model
     """
-    api_key = GEMINI_API_KEY or os.getenv("GOOGLE_API_KEY", "").strip()
+    api_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip() or GEMINI_API_KEY
     if not api_key:
         return ""
-
-    url = f"{GEMINI_URL}?key={api_key}"
 
     contents = []
 
@@ -89,23 +97,32 @@ def call_gemini_api(
         },
     }
 
-    try:
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=6) as response:
-            res_json = json.loads(response.read().decode("utf-8"))
-            candidates = res_json.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts:
-                    return parts[0].get("text", "").strip()
-    except Exception as e:
-        log.warning("Gemini API request failed: %s. Falling back to Built-in Knowledge Engine.", e)
+    # Thử lần lượt các model khả dụng
+    tested_models = []
+    for model_name in CANDIDATE_MODELS:
+        if not model_name or model_name in tested_models:
+            continue
+        tested_models.append(model_name)
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=8) as response:
+                res_json = json.loads(response.read().decode("utf-8"))
+                candidates = res_json.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if parts:
+                        return parts[0].get("text", "").strip()
+        except Exception as e:
+            log.warning("Gemini model %s request failed: %s", model_name, e)
+            continue
 
     return ""
 

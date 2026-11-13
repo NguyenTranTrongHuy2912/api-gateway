@@ -10,6 +10,10 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Annotated, Literal, Optional
 
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
+
 import grpc
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
