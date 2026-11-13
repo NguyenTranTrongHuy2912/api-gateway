@@ -1837,34 +1837,12 @@ async def ai_chat(
 ):
     p_norm = normalize_vn(payload.prompt)
 
-    # 1. Ưu tiên giải đáp kiến trúc đồ án và công nghệ
-    if any(k in p_norm for k in ["kien truc", "3 tang", "giai thich", "fastapi", "grpc", "react native", "tamagui", "cong nghe"]):
-        reply = (
-            "Ứng dụng ChatApp được xây dựng theo kiến trúc Microservices 3 tầng độc lập chuẩn Clean Architecture:\n\n"
-            "1. 📱 **Mobile Frontend (React Native + Expo SDK 58)**:\n"
-            "   • Điều hướng bằng Expo Router (File-based navigation) bảo vệ bằng Stack.Protected.\n"
-            "   • Redux Toolkit + RTK Query quản lý cache server và Optimistic Update.\n"
-            "   • Hiệu ứng động Animation FadeInUp và ScalePressable nhún lò xo.\n\n"
-            "2. 🚀 **API Gateway (FastAPI - Python 3.13)**:\n"
-            "   • Đóng vai trò Backend-For-Frontend (BFF), bảo mật xác thực JWT.\n"
-            "   • Quản lý WebSocket realtime thông báo tin nhắn và trạng thái chấm xanh Online.\n"
-            "   • Tích hợp Vector Database in-memory (Cosine Similarity K-NN) và Google Gemini 1.5 Flash.\n\n"
-            "3. ⚙️ **Core Backend (Java 21 Netty gRPC)**:\n"
-            "   • Xử lý logic nghiệp vụ phòng chat, danh sách bạn bè với Protobuf nhị phân siêu tốc.\n"
-            "   • Lưu trữ dữ liệu trên MongoDB Atlas Cloud và gửi OTP qua Jakarta Mail."
-        )
-        return {
-            "ok": True,
-            "reply": reply,
-            "model": "gemini-1.5-flash",
-        }
-
-    # 2. Kiểm tra xem người dùng có đang hỏi về các cuộc trò chuyện / tin nhắn / database không
-    db_chat_keywords = [
-        "cuoc tro chuyen", "tin nhan", "moi nhat", "gan day", "vua nhan",
-        "database", "tim tin", "nhan gi", "ai nhan", "trong huy", "quoc dep trai", "van quoc"
-    ]
-    is_asking_about_db = any(k in p_norm for k in db_chat_keywords)
+    # 1. Kiểm tra xem người dùng có đang hỏi cụ thể về dữ liệu tin nhắn / database không
+    is_asking_about_db = (
+        ("tin nhan" in p_norm and any(k in p_norm for k in ["moi nhat", "gan day", "vua nhan", "tim", "tra cuu"]))
+        or ("cuoc tro chuyen" in p_norm and any(k in p_norm for k in ["moi nhat", "gan day", "vua nhan"]))
+        or ("vector database" in p_norm or "tim kiem tin nhan" in p_norm)
+    )
 
     if is_asking_about_db:
         try:
