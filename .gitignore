@@ -10,3 +10,4 @@ seed_users.py
 graphify-out/*
 !graphify-out/graph.json
 vector_store.json
+.codegraph/
