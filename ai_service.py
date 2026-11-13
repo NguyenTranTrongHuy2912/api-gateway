@@ -30,7 +30,7 @@ load_dotenv(override=True)
 
 log = logging.getLogger("gateway.ai")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip() or "AIzaSyD6-POzJ4--n8mHGM0vtgKrY8zo_aTWgaA"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
 CANDIDATE_MODELS = [
@@ -63,7 +63,7 @@ def call_gemini_api(
     """
     Gọi trực tiếp Google Gemini REST API hỗ trợ Multi-turn Conversation & tự động fallback model
     """
-    api_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip() or GEMINI_API_KEY
+    api_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip() or GEMINI_API_KEY or "AIzaSyD6-POzJ4--n8mHGM0vtgKrY8zo_aTWgaA"
     if not api_key:
         return ""
 
@@ -181,6 +181,17 @@ def _smart_fallback_reply(prompt: str) -> str:
             "2. **Tán xạ trong khí quyển:** Khi ánh sáng chiếu xuyên qua tầng khí quyển của Trái Đất, nó va chạm với hàng tỷ phân tử khí nitơ (N₂) và oxy (O₂). Ánh sáng có **bước sóng ngắn như màu xanh lam** bị tán xạ mạnh hơn ánh sáng đỏ gấp gần 10 lần, tỏa đi khắp mọi hướng trên bầu trời.\n"
             "3. **Độ nhạy của mắt người:** Dù màu tím có bước sóng còn ngắn hơn xanh lam, nhưng mắt con người nhạy cảm hơn nhiều với dải màu xanh lam, nên ta luôn nhìn thấy bầu trời có màu xanh tuyệt đẹp!\n\n"
             "💡 *Vào hoàng hôn, ánh sáng phải đi qua tầng khí quyển dày hơn nhiều, các tia xanh bị tán xạ hết dọc đường nên chỉ còn các tia đỏ và cam đến được mắt ta!*"
+        )
+
+    # 2.1 Phát minh ra điện / Lịch sử dòng điện
+    if ("phat minh" in p_lower or "tim ra" in p_lower or "ai" in p_lower) and ("dien" in p_lower or "dong dien" in p_lower or "dien nang" in p_lower):
+        return (
+            "⚡ **Ai là người phát minh / tìm ra điện?**\n\n"
+            "Điện là một hiện tượng tự nhiên nên không có một cá nhân duy nhất \"phát minh\" ra nó, mà là thành quả khám phá và hoàn thiện của nhiều nhà khoa học vĩ đại qua các thế kỷ:\n\n"
+            "• **Benjamin Franklin (1752):** Nổi tiếng với thí nghiệm thả diều trong giông bão, chứng minh sét thực chất là một dạng của điện năng.\n"
+            "• **Alessandro Volta (1800):** Phát minh ra pin điện đầu tiên (Voltaic Pile), tạo ra dòng điện ổn định và liên tục (đơn vị điện thế Volt mang tên ông).\n"
+            "• **Michael Faraday (1831):** Khám phá hiện tượng cảm ứng điện từ, đặt nền móng khai sinh ra máy phát điện và động cơ điện hiện đại.\n"
+            "• **Thomas Edison & Nikola Tesla (Cuối thế kỷ 19):** Thomas Edison phát minh ra bóng đèn thương mại và lưới điện một chiều (DC); Nikola Tesla phát minh ra dòng điện xoay chiều (AC) - tiêu chuẩn cung cấp năng lượng cho toàn thế giới ngày nay."
         )
 
     # 3. Lịch sử Việt Nam: Bác Hồ / Chủ tịch Hồ Chí Minh
