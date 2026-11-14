@@ -30,7 +30,7 @@ load_dotenv(override=True)
 
 log = logging.getLogger("gateway.ai")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip() or "AIzaSyD6-POzJ4--n8mHGM0vtgKrY8zo_aTWgaA"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
 CANDIDATE_MODELS = [
@@ -63,7 +63,7 @@ def call_gemini_api(
     """
     Gọi trực tiếp Google Gemini REST API hỗ trợ Multi-turn Conversation & tự động fallback model
     """
-    api_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip() or GEMINI_API_KEY or "AIzaSyD6-POzJ4--n8mHGM0vtgKrY8zo_aTWgaA"
+    api_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip() or GEMINI_API_KEY
     if not api_key:
         return ""
 
