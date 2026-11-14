@@ -130,7 +130,7 @@ def to_http_error(e: grpc.RpcError, expose_details: bool = False) -> HTTPExcepti
 
     if status == 400:
         detail = e.details() or "Invalid request"
-    elif expose_details and status in (401, 404, 409, 429):
+    elif expose_details and status in (401, 403, 404, 409, 429):
         # Auth endpoints only: the backend wrote these messages for end users
         detail = e.details() or DETAIL_BY_STATUS.get(status, "Error")
     else:
@@ -855,11 +855,21 @@ async def create_room(
 
 
 class AddRoomMembersBody(BaseModel):
-    member_ids: list[str]
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    member_ids: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
+        min_length=1, max_length=99
+    )
 
 
 class UpdateRoomNameBody(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    # Khớp giới hạn 50 ký tự của backend Java
+    name: str = Field(min_length=1, max_length=50)
+
+
+# Thao tác nhóm: mọi kiểm tra quyền và ghi dữ liệu nằm ở Java; gateway chỉ chuyển yêu cầu.
 
 
 @app.post("/api/v1/rooms/{room_id}/leave")
@@ -868,91 +878,64 @@ async def leave_room(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Người dùng rời khỏi phòng chat nhóm - Cập nhật dữ liệu thật trong MongoDB Atlas."""
-    if mongo_db is not None:
-        room = mongo_db["rooms"].find_one({"_id": room_id})
-        if not room:
-            raise HTTPException(status_code=404, detail="Không tìm thấy phòng chat.")
-
-        members = room.get("member_ids", [])
-        if user_id not in members:
-            return {"ok": True, "room_id": room_id, "message": "Bạn không còn trong phòng chat này."}
-
-        # Xóa user_id khỏi danh sách thành viên
-        mongo_db["rooms"].update_one(
-            {"_id": room_id},
-            {"$pull": {"member_ids": user_id}}
+    try:
+        resp = await request.app.state.stub.LeaveRoom(
+            chat_pb2.LeaveRoomRequest(user_id=user_id, room_id=room_id),
+            timeout=GRPC_TIMEOUT,
         )
-
-        # Lấy tên hiển thị của người rời nhóm
-        user_doc = mongo_db["users"].find_one({"_id": user_id})
-        display_name = user_doc.get("display_name", "Một thành viên") if user_doc else "Một thành viên"
-
-        # Thêm tin nhắn hệ thống thông báo người dùng rời nhóm
-        sys_msg_id = str(uuid.uuid4())
-        now_ms = int(time.time() * 1000)
-        mongo_db["messages"].insert_one({
-            "_id": sys_msg_id,
-            "room_id": room_id,
-            "sender_id": "system",
-            "content": f"{display_name} đã rời khỏi nhóm.",
-            "timestamp": now_ms,
-            "type": "TEXT",
-        })
-
-        # Cập nhật last_message của phòng
-        mongo_db["rooms"].update_one(
-            {"_id": room_id},
-            {"$set": {
-                "last_message_content": f"{display_name} đã rời khỏi nhóm.",
-                "last_message_sender_id": "system",
-                "last_message_timestamp": now_ms,
-            }}
-        )
-
-        # Broadcast sự kiện WebSocket
-        asyncio.create_task(broadcast_ws_event({
-            "type": "ROOM_UPDATED",
-            "room_id": room_id,
-            "timestamp": now_ms,
-        }))
-
-        return {"ok": True, "room_id": room_id, "message": "Bạn đã rời khỏi nhóm thành công."}
-
-    return {"ok": True, "room_id": room_id, "message": "Bạn đã rời nhóm."}
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+    return {"ok": resp.is_success, "room_id": room_id, "message": resp.status_message}
 
 
 @app.post("/api/v1/rooms/{room_id}/members")
 async def add_room_members(
     room_id: str,
     payload: AddRoomMembersBody,
+    request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Thêm thành viên vào phòng chat nhóm."""
-    if mongo_db is not None:
-        mongo_db["rooms"].update_one(
-            {"_id": room_id},
-            {"$addToSet": {"member_ids": {"$each": payload.member_ids}}}
+    try:
+        resp = await request.app.state.stub.AddRoomMembers(
+            chat_pb2.AddRoomMembersRequest(
+                user_id=user_id,  # từ token, không nhận từ client
+                room_id=room_id,
+                member_ids=payload.member_ids,
+            ),
+            timeout=GRPC_TIMEOUT,
         )
-        return {"ok": True, "room_id": room_id, "added_count": len(payload.member_ids)}
-    return {"ok": True, "room_id": room_id}
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+    return {
+        "ok": True,
+        "room_id": room_id,
+        "added_count": resp.added_count,
+        "room": room_to_dict(resp.room),
+    }
 
 
 @app.patch("/api/v1/rooms/{room_id}/name")
 async def update_room_name(
     room_id: str,
     payload: UpdateRoomNameBody,
+    request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Cập nhật tên nhóm chat."""
-    clean_name = payload.name.strip()
-    if mongo_db is not None:
-        mongo_db["rooms"].update_one(
-            {"_id": room_id},
-            {"$set": {"name": clean_name}}
+    try:
+        resp = await request.app.state.stub.UpdateRoomName(
+            chat_pb2.UpdateRoomNameRequest(user_id=user_id, room_id=room_id, name=payload.name),
+            timeout=GRPC_TIMEOUT,
         )
-        return {"ok": True, "room_id": room_id, "new_name": clean_name}
-    return {"ok": True, "room_id": room_id, "new_name": clean_name}
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
+    return {
+        "ok": True,
+        "room_id": room_id,
+        "new_name": resp.room.name,
+        "room": room_to_dict(resp.room),
+    }
+
+
 @app.post("/api/v1/rooms/{room_id}/read")
 async def mark_room_read(
     room_id: str,
@@ -1588,6 +1571,8 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                     }
                 elif event.event_type == chat_pb2.EVENT_FRIEND_ACCEPTED:
                     payload["user_id"] = event.user_id
+                elif event.event_type == chat_pb2.EVENT_ROOM_UPDATED:
+                    payload["room_id"] = event.room.room_id
                 await websocket.send_json(payload)
         except asyncio.CancelledError:
             ended_by_cancel = True
