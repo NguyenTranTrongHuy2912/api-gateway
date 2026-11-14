@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 
 load_dotenv()
-JWT_SECRET = os.environ.get("JWT_SECRET", "3277e7cd0687955793ee1c5b4980cb16c3d7284d9c5975411e541f89f8169199")
+JWT_SECRET = os.environ.get("JWT_SECRET")
 JWT_ALGO = "HS256"
 JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS", "3"))
 
