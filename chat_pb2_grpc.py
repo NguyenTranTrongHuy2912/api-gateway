@@ -64,6 +64,21 @@ class ChatServiceStub:
                 request_serializer=chat__pb2.MarkRoomReadRequest.SerializeToString,
                 response_deserializer=chat__pb2.MarkRoomReadResponse.FromString,
                 _registered_method=True)
+        self.LeaveRoom = channel.unary_unary(
+                '/chat.ChatService/LeaveRoom',
+                request_serializer=chat__pb2.LeaveRoomRequest.SerializeToString,
+                response_deserializer=chat__pb2.LeaveRoomResponse.FromString,
+                _registered_method=True)
+        self.AddRoomMembers = channel.unary_unary(
+                '/chat.ChatService/AddRoomMembers',
+                request_serializer=chat__pb2.AddRoomMembersRequest.SerializeToString,
+                response_deserializer=chat__pb2.AddRoomMembersResponse.FromString,
+                _registered_method=True)
+        self.UpdateRoomName = channel.unary_unary(
+                '/chat.ChatService/UpdateRoomName',
+                request_serializer=chat__pb2.UpdateRoomNameRequest.SerializeToString,
+                response_deserializer=chat__pb2.UpdateRoomNameResponse.FromString,
+                _registered_method=True)
         self.SubscribeEvents = channel.unary_stream(
                 '/chat.ChatService/SubscribeEvents',
                 request_serializer=chat__pb2.StreamEventsRequest.SerializeToString,
@@ -126,6 +141,25 @@ class ChatServiceServicer:
         raise NotImplementedError('Method not implemented!')
 
     def MarkRoomRead(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def LeaveRoom(self, request, context):
+        """--- Quản lý nhóm (Java là nơi duy nhất ghi dữ liệu phòng) ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AddRoomMembers(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateRoomName(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -195,6 +229,21 @@ def add_ChatServiceServicer_to_server(servicer, server):
                     servicer.MarkRoomRead,
                     request_deserializer=chat__pb2.MarkRoomReadRequest.FromString,
                     response_serializer=chat__pb2.MarkRoomReadResponse.SerializeToString,
+            ),
+            'LeaveRoom': grpc.unary_unary_rpc_method_handler(
+                    servicer.LeaveRoom,
+                    request_deserializer=chat__pb2.LeaveRoomRequest.FromString,
+                    response_serializer=chat__pb2.LeaveRoomResponse.SerializeToString,
+            ),
+            'AddRoomMembers': grpc.unary_unary_rpc_method_handler(
+                    servicer.AddRoomMembers,
+                    request_deserializer=chat__pb2.AddRoomMembersRequest.FromString,
+                    response_serializer=chat__pb2.AddRoomMembersResponse.SerializeToString,
+            ),
+            'UpdateRoomName': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateRoomName,
+                    request_deserializer=chat__pb2.UpdateRoomNameRequest.FromString,
+                    response_serializer=chat__pb2.UpdateRoomNameResponse.SerializeToString,
             ),
             'SubscribeEvents': grpc.unary_stream_rpc_method_handler(
                     servicer.SubscribeEvents,
@@ -384,6 +433,87 @@ class ChatService:
             '/chat.ChatService/MarkRoomRead',
             chat__pb2.MarkRoomReadRequest.SerializeToString,
             chat__pb2.MarkRoomReadResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def LeaveRoom(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/LeaveRoom',
+            chat__pb2.LeaveRoomRequest.SerializeToString,
+            chat__pb2.LeaveRoomResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AddRoomMembers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/AddRoomMembers',
+            chat__pb2.AddRoomMembersRequest.SerializeToString,
+            chat__pb2.AddRoomMembersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateRoomName(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/UpdateRoomName',
+            chat__pb2.UpdateRoomNameRequest.SerializeToString,
+            chat__pb2.UpdateRoomNameResponse.FromString,
             options,
             channel_credentials,
             insecure,

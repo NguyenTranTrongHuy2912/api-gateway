@@ -15,6 +15,11 @@ service ChatService {
   rpc ListRooms (ListRoomsRequest) returns (ListRoomsResponse);
   rpc MarkRoomRead (MarkRoomReadRequest) returns (MarkRoomReadResponse);
 
+  // --- Quản lý nhóm (Java là nơi duy nhất ghi dữ liệu phòng) ---
+  rpc LeaveRoom (LeaveRoomRequest) returns (LeaveRoomResponse);
+  rpc AddRoomMembers (AddRoomMembersRequest) returns (AddRoomMembersResponse);
+  rpc UpdateRoomName (UpdateRoomNameRequest) returns (UpdateRoomNameResponse);
+
   // --- Realtime Streaming ---
   rpc SubscribeEvents (StreamEventsRequest) returns (stream ChatEvent);
 
@@ -127,6 +132,39 @@ message MarkRoomReadRequest {
 }
 
 message MarkRoomReadResponse {}
+
+// ---------------------------------------------------------------- Quản lý nhóm
+
+message LeaveRoomRequest {
+  string user_id = 1;      // người rời (lấy từ token ở gateway)
+  string room_id = 2;
+}
+
+message LeaveRoomResponse {
+  bool is_success = 1;
+  string status_message = 2;
+}
+
+message AddRoomMembersRequest {
+  string user_id = 1;                // người thực hiện, phải là thành viên nhóm
+  string room_id = 2;
+  repeated string member_ids = 3;    // người cần thêm; ai đã trong nhóm thì bỏ qua
+}
+
+message AddRoomMembersResponse {
+  Room room = 1;                     // trạng thái phòng sau khi thêm, tính theo người thực hiện
+  int32 added_count = 2;             // số người thực sự được thêm mới
+}
+
+message UpdateRoomNameRequest {
+  string user_id = 1;                // người thực hiện, phải là thành viên nhóm
+  string room_id = 2;
+  string name = 3;
+}
+
+message UpdateRoomNameResponse {
+  Room room = 1;
+}
 
 // ---------------------------------------------------------------- Realtime Streaming
 
