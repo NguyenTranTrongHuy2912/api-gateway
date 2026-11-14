@@ -15,14 +15,12 @@ JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS", "3"))
 # Bộ nhớ lưu mốc thời gian thu hồi token khi đổi mật khẩu: user_id -> timestamp (giây)
 REVOCATION_TIMESTAMPS: dict[str, int] = {}
 
-# Danh sách email mặc định có quyền Quản trị viên (System Admin)
-DEFAULT_ADMIN_EMAILS = {
-    "admin@chatapp.com",
-    "admin@gmail.com",
-    "quoc05@gmail.com",
-    "admin@iuh.edu.vn",
-    "nguyenvanquoc20055@gmail.com",
-}
+# Danh sách email Quản trị viên được đọc an toàn từ biến môi trường ADMIN_EMAILS (tránh lộ email cá nhân lên Git)
+# Cấu hình trong .env: ADMIN_EMAILS="admin@chatapp.com,admin@iuh.edu.vn"
+_env_admin_emails = os.getenv("ADMIN_EMAILS", "")
+DEFAULT_ADMIN_EMAILS = set(
+    e.strip().lower() for e in _env_admin_emails.split(",") if e.strip()
+)
 
 # Cache in-memory để tăng tốc đọc: user_id -> "ADMIN" | "USER"
 USER_ROLES_STORE: dict[str, str] = {}
