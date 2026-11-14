@@ -276,7 +276,7 @@ class RegisterPushTokenBody(BaseModel):
 
 
 def room_to_dict(room: chat_pb2.Room) -> dict:
-    return {
+    d = {
         "room_id": room.room_id,
         "type": ROOM_TYPE_TO_API.get(room.type, "UNKNOWN"),
         "name": room.name,
@@ -295,7 +295,16 @@ def room_to_dict(room: chat_pb2.Room) -> dict:
             else None
         ),
         "unread_count": room.unread_count,
+        "pinned_message": None,
     }
+    if mongo_db is not None:
+        try:
+            r_doc = mongo_db["rooms"].find_one({"_id": room.room_id}, {"pinned_message": 1})
+            if r_doc and r_doc.get("pinned_message"):
+                d["pinned_message"] = r_doc["pinned_message"]
+        except Exception:
+            pass
+    return d
 
 
 @app.get("/")
@@ -913,6 +922,193 @@ async def mark_room_read(
     return {"ok": True}
 
 
+class MessageReactionBody(BaseModel):
+    emoji: str = Field(min_length=1, max_length=10)
+
+
+class PinMessageBody(BaseModel):
+    message_id: str = Field(min_length=1, max_length=100)
+
+
+@app.post("/api/v1/rooms/{room_id}/messages/{message_id}/revoke")
+async def revoke_message(
+    room_id: str,
+    message_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Thu hồi tin nhắn 2 phía trong vòng 30 phút sau khi gửi."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    msg = mongo_db["messages"].find_one({"_id": message_id, "room_id": room_id})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn cần thu hồi.")
+
+    if msg.get("sender_id") != user_id:
+        raise HTTPException(status_code=403, detail="Bạn chỉ có thể thu hồi tin nhắn do chính mình gửi.")
+
+    if msg.get("is_revoked"):
+        return {"ok": True, "message_id": message_id, "message": "Tin nhắn đã được thu hồi trước đó."}
+
+    msg_time = msg.get("timestamp", 0)
+    now_ms = int(time.time() * 1000)
+    # Giới hạn 30 phút (30 * 60 * 1000 ms)
+    if (now_ms - msg_time) > 30 * 60 * 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Đã quá 30 phút kể từ lúc gửi. Không thể thu hồi tin nhắn này nữa."
+        )
+
+    revoked_text = "Tin nhắn đã được thu hồi"
+    mongo_db["messages"].update_one(
+        {"_id": message_id},
+        {"$set": {"content": revoked_text, "is_revoked": True, "revoked_at": now_ms}}
+    )
+
+    # Cập nhật last_message của room nếu đây là tin nhắn cuối cùng
+    room = mongo_db["rooms"].find_one({"_id": room_id})
+    if room and room.get("last_message_timestamp") == msg_time:
+        mongo_db["rooms"].update_one(
+            {"_id": room_id},
+            {"$set": {"last_message_content": revoked_text}}
+        )
+
+    # Phát tín hiệu realtime qua WebSocket tới toàn bộ thành viên trong phòng
+    asyncio.create_task(broadcast_ws_event({
+        "type": "MESSAGE_REVOKED",
+        "room_id": room_id,
+        "message_id": message_id,
+        "content": revoked_text,
+        "sender_id": user_id,
+        "timestamp": now_ms,
+    }))
+
+    return {"ok": True, "message_id": message_id, "content": revoked_text}
+
+
+@app.post("/api/v1/rooms/{room_id}/messages/{message_id}/react")
+async def react_message(
+    room_id: str,
+    message_id: str,
+    body: MessageReactionBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Thả cảm xúc cho tin nhắn (👍, ❤️, 😂, 😮, 😢, 😡)"""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    msg = mongo_db["messages"].find_one({"_id": message_id, "room_id": room_id})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn.")
+
+    reactions = msg.get("reactions") or {}
+    emoji = body.emoji.strip()
+
+    # Toggle reaction
+    current_users = reactions.get(emoji, [])
+    if user_id in current_users:
+        current_users.remove(user_id)
+        if not current_users:
+            reactions.pop(emoji, None)
+        else:
+            reactions[emoji] = current_users
+    else:
+        # Gỡ user khỏi các emoji khác (mỗi user thả 1 cảm xúc chính)
+        for k in list(reactions.keys()):
+            if user_id in reactions[k]:
+                reactions[k].remove(user_id)
+                if not reactions[k]:
+                    reactions.pop(k, None)
+        if emoji not in reactions:
+            reactions[emoji] = []
+        reactions[emoji].append(user_id)
+
+    mongo_db["messages"].update_one(
+        {"_id": message_id},
+        {"$set": {"reactions": reactions}}
+    )
+
+    # Phát tín hiệu realtime qua WebSocket
+    asyncio.create_task(broadcast_ws_event({
+        "type": "MESSAGE_REACTION",
+        "room_id": room_id,
+        "message_id": message_id,
+        "reactions": reactions,
+        "user_id": user_id,
+        "emoji": emoji,
+    }))
+
+    return {"ok": True, "message_id": message_id, "reactions": reactions}
+
+
+@app.post("/api/v1/rooms/{room_id}/pin")
+async def pin_message(
+    room_id: str,
+    body: PinMessageBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Ghim tin nhắn quan trọng lên đầu phòng chat."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    msg = mongo_db["messages"].find_one({"_id": body.message_id, "room_id": room_id})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn cần ghim.")
+
+    sender = mongo_db["users"].find_one({"_id": msg.get("sender_id")})
+    sender_name = sender.get("display_name", "Thành viên") if sender else "Thành viên"
+
+    pinned_data = {
+        "id": body.message_id,
+        "content": msg.get("content", ""),
+        "sender_id": msg.get("sender_id", ""),
+        "sender_name": sender_name,
+        "timestamp": msg.get("timestamp", int(time.time() * 1000)),
+        "pinned_by": user_id,
+        "pinned_at": int(time.time() * 1000),
+    }
+
+    mongo_db["rooms"].update_one(
+        {"_id": room_id},
+        {"$set": {"pinned_message": pinned_data}}
+    )
+
+    asyncio.create_task(broadcast_ws_event({
+        "type": "ROOM_PINNED_MESSAGE",
+        "room_id": room_id,
+        "pinned_message": pinned_data,
+    }))
+
+    return {"ok": True, "room_id": room_id, "pinned_message": pinned_data}
+
+
+@app.delete("/api/v1/rooms/{room_id}/pin")
+async def unpin_message(
+    room_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Bỏ ghim tin nhắn của phòng chat."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    mongo_db["rooms"].update_one(
+        {"_id": room_id},
+        {"$unset": {"pinned_message": ""}}
+    )
+
+    asyncio.create_task(broadcast_ws_event({
+        "type": "ROOM_PINNED_MESSAGE",
+        "room_id": room_id,
+        "pinned_message": None,
+    }))
+
+    return {"ok": True, "room_id": room_id, "pinned_message": None}
+
+
 # ---------------------------------------------------------------- Uploads
 
 
@@ -1142,19 +1338,37 @@ async def get_history(
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
 
+    msg_ids = [m.message_id for m in resp.messages]
+    extra_map = {}
+    if mongo_db is not None and msg_ids:
+        try:
+            docs = mongo_db["messages"].find(
+                {"_id": {"$in": msg_ids}},
+                {"is_revoked": 1, "reactions": 1}
+            )
+            for d in docs:
+                extra_map[d["_id"]] = {
+                    "is_revoked": bool(d.get("is_revoked", False)),
+                    "reactions": d.get("reactions") or {},
+                }
+        except Exception:
+            pass
+
     return {
         "messages": [
             {
                 "message_id": m.message_id,
                 "room_id": m.room_id,
                 "sender_id": m.sender_id,
-                "content": m.content,
+                "content": "Tin nhắn đã được thu hồi" if extra_map.get(m.message_id, {}).get("is_revoked") else m.content,
                 "timestamp": m.timestamp,
                 "type": MESSAGE_TYPE_TO_API.get(m.type, "TEXT"),
                 "media_url": m.media_url,
                 "media_width": m.media_width,
                 "media_height": m.media_height,
                 "media_duration_ms": m.media_duration_ms,
+                "is_revoked": extra_map.get(m.message_id, {}).get("is_revoked", False),
+                "reactions": extra_map.get(m.message_id, {}).get("reactions", {}),
             }
             for m in resp.messages
         ],
