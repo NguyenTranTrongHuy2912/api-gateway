@@ -200,6 +200,8 @@ class SendMessageRequest(BaseModel):
     # Gửi tài liệu (Document / File)
     file_name: Optional[str] = Field(default=None, max_length=255)
     file_size: Optional[int] = Field(default=0, ge=0)
+    # Chuyển tiếp tin nhắn (Forward)
+    is_forwarded: bool = False
 
     @model_validator(mode="after")
     def check_by_type(self):
@@ -1308,6 +1310,8 @@ async def send_message(
             up_fields = {}
             if payload.reply_to:
                 up_fields["reply_to"] = payload.reply_to.model_dump()
+            if payload.is_forwarded:
+                up_fields["is_forwarded"] = True
             if payload.type == "FILE":
                 up_fields["type"] = "FILE"
                 up_fields["file_name"] = payload.file_name
@@ -1360,6 +1364,87 @@ async def send_message(
     }
 
 
+@app.post("/api/v1/chat/messages/{message_id}/star")
+async def toggle_star_message(
+    message_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Đánh dấu / Lưu trữ tin nhắn quan trọng (Saved / Starred Message)."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    existing = mongo_db["starred_messages"].find_one({"user_id": user_id, "message_id": message_id})
+    if existing:
+        mongo_db["starred_messages"].delete_one({"_id": existing["_id"]})
+        return {"ok": True, "message_id": message_id, "starred": False}
+
+    msg = mongo_db["messages"].find_one({"_id": message_id})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn cần lưu.")
+
+    sender = mongo_db["users"].find_one({"_id": msg.get("sender_id")})
+    sender_name = sender.get("display_name", "Thành viên") if sender else "Thành viên"
+
+    now_ms = int(time.time() * 1000)
+    starred_doc = {
+        "_id": f"{user_id}_{message_id}",
+        "user_id": user_id,
+        "message_id": message_id,
+        "room_id": msg.get("room_id", ""),
+        "content": msg.get("content", ""),
+        "sender_id": msg.get("sender_id", ""),
+        "sender_name": sender_name,
+        "type": msg.get("type", "TEXT"),
+        "media_url": msg.get("media_url"),
+        "file_name": msg.get("file_name"),
+        "file_size": msg.get("file_size"),
+        "timestamp": msg.get("timestamp", now_ms),
+        "starred_at": now_ms,
+    }
+    mongo_db["starred_messages"].replace_one(
+        {"_id": starred_doc["_id"]},
+        starred_doc,
+        upsert=True
+    )
+    return {"ok": True, "message_id": message_id, "starred": True}
+
+
+@app.get("/api/v1/chat/starred")
+async def get_starred_messages(
+    request: Request,
+    room_id: Optional[str] = Query(default=None),
+    user_id: str = Depends(get_current_user),
+):
+    """Lấy danh sách các tin nhắn đã đánh dấu / lưu trữ của user."""
+    if mongo_db is None:
+        return {"messages": []}
+
+    query = {"user_id": user_id}
+    if room_id:
+        query["room_id"] = room_id
+
+    docs = list(mongo_db["starred_messages"].find(query).sort("starred_at", -1).limit(100))
+    return {
+        "messages": [
+            {
+                "message_id": d["message_id"],
+                "room_id": d.get("room_id", ""),
+                "sender_id": d.get("sender_id", ""),
+                "sender_name": d.get("sender_name", "Thành viên"),
+                "content": d.get("content", ""),
+                "type": d.get("type", "TEXT"),
+                "media_url": d.get("media_url"),
+                "file_name": d.get("file_name"),
+                "file_size": d.get("file_size"),
+                "timestamp": d.get("timestamp", 0),
+                "starred_at": d.get("starred_at", 0),
+            }
+            for d in docs
+        ]
+    }
+
+
 @app.get("/api/v1/chat/history/{room_id}")
 async def get_history(
     room_id: str,
@@ -1381,11 +1466,12 @@ async def get_history(
 
     msg_ids = [m.message_id for m in resp.messages]
     extra_map = {}
+    starred_set = set()
     if mongo_db is not None and msg_ids:
         try:
             docs = mongo_db["messages"].find(
                 {"_id": {"$in": msg_ids}},
-                {"is_revoked": 1, "reactions": 1, "reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1}
+                {"is_revoked": 1, "reactions": 1, "reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1, "is_forwarded": 1}
             )
             for d in docs:
                 extra_map[d["_id"]] = {
@@ -1396,7 +1482,13 @@ async def get_history(
                     "file_name": d.get("file_name"),
                     "file_size": d.get("file_size"),
                     "media_url": d.get("media_url"),
+                    "is_forwarded": bool(d.get("is_forwarded", False)),
                 }
+            starred_docs = mongo_db["starred_messages"].find(
+                {"user_id": user_id, "message_id": {"$in": msg_ids}},
+                {"message_id": 1}
+            )
+            starred_set = {s["message_id"] for s in starred_docs}
         except Exception:
             pass
 
@@ -1418,6 +1510,8 @@ async def get_history(
                 "reply_to": extra_map.get(m.message_id, {}).get("reply_to"),
                 "file_name": extra_map.get(m.message_id, {}).get("file_name"),
                 "file_size": extra_map.get(m.message_id, {}).get("file_size"),
+                "is_forwarded": extra_map.get(m.message_id, {}).get("is_forwarded", False),
+                "is_starred": m.message_id in starred_set,
             }
             for m in resp.messages
         ],
@@ -1813,7 +1907,7 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                         try:
                             extra_doc = mongo_db["messages"].find_one(
                                 {"_id": event.message.message_id},
-                                {"reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1}
+                                {"reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1, "is_forwarded": 1}
                             )
                             if extra_doc:
                                 if extra_doc.get("reply_to"):
@@ -1825,6 +1919,8 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                                     msg_obj["file_size"] = extra_doc.get("file_size", 0)
                                 if extra_doc.get("media_url"):
                                     msg_obj["media_url"] = extra_doc["media_url"]
+                                if extra_doc.get("is_forwarded"):
+                                    msg_obj["is_forwarded"] = True
                         except Exception:
                             pass
                     payload["message"] = msg_obj
