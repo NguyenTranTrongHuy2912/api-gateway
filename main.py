@@ -67,11 +67,11 @@ if MONGO_URI:
 
 
 def is_own_image_url(url: str) -> bool:
-    """Chỉ chấp nhận ảnh nằm trong đúng tài khoản + thư mục Cloudinary của mình."""
+    """Chỉ chấp nhận file media (ảnh, video, tài liệu raw) nằm trong đúng tài khoản + thư mục Cloudinary của mình."""
     if not CLOUDINARY_CLOUD_NAME or not url:
         return False
     pattern = (
-        rf"^https://res\.cloudinary\.com/{re.escape(CLOUDINARY_CLOUD_NAME)}/(?:image|video)/upload/"
+        rf"^https://res\.cloudinary\.com/{re.escape(CLOUDINARY_CLOUD_NAME)}/(?:image|video|raw)/upload/"
         rf"(?:v\d+/)?{re.escape(CLOUDINARY_FOLDER)}/[A-Za-z0-9_-]+\.[A-Za-z0-9]+$"
     )
     return re.match(pattern, url) is not None
@@ -175,20 +175,31 @@ app.add_middleware(
 )
 
 
+class ReplyToDto(BaseModel):
+    message_id: str = Field(min_length=1, max_length=100)
+    sender_name: str = Field(min_length=1, max_length=100)
+    content: str = Field(default="", max_length=1000)
+
+
 class SendMessageRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     room_id: str = Field(min_length=1, max_length=100)
-    type: Literal["TEXT", "IMAGE", "VIDEO"] = "TEXT"
-    # TEXT: bắt buộc. IMAGE/VIDEO: để trống.
+    type: Literal["TEXT", "IMAGE", "VIDEO", "FILE"] = "TEXT"
+    # TEXT: bắt buộc. IMAGE/VIDEO/FILE: để trống hoặc kèm caption/tên file.
     content: str = Field(default="", max_length=4000)
     # Optional: client-generated id. If omitted, the gateway generates a uuid.
     message_id: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    # Dùng cho IMAGE hoặc VIDEO
+    # Dùng cho IMAGE, VIDEO hoặc FILE
     media_url: Optional[str] = Field(default=None, max_length=500)
     media_width: int = Field(default=0, ge=0, le=20000)
     media_height: int = Field(default=0, ge=0, le=20000)
     media_duration_ms: int = Field(default=0, ge=0)
+    # Trả lời / Trích dẫn tin nhắn
+    reply_to: Optional[ReplyToDto] = None
+    # Gửi tài liệu (Document / File)
+    file_name: Optional[str] = Field(default=None, max_length=255)
+    file_size: Optional[int] = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def check_by_type(self):
@@ -196,7 +207,7 @@ class SendMessageRequest(BaseModel):
             if not self.content:
                 raise ValueError("content must not be empty")
         elif not is_own_image_url(self.media_url or ""):
-            raise ValueError("media_url is not a valid uploaded image")
+            raise ValueError("media_url is not a valid uploaded media")
         return self
 
 
@@ -1123,19 +1134,25 @@ async def sign_upload(
     if not (CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET):
         raise HTTPException(status_code=503, detail="Upload is not configured")
 
-    res_type = "video" if resource_type == "video" else "image"
+    if resource_type in ("video",):
+        res_type = "video"
+        transformation = ""
+    elif resource_type in ("raw", "document", "file"):
+        res_type = "raw"
+        transformation = ""
+    else:
+        res_type = "image"
+        transformation = IMAGE_INCOMING_TRANSFORMATION
     timestamp = int(time.time())
     public_id = f"{CLOUDINARY_FOLDER}/{uuid.uuid4().hex}"
     
-    if res_type == "video":
+    if res_type in ("video", "raw"):
         to_sign = f"public_id={public_id}&timestamp={timestamp}"
-        transformation = ""
     else:
         to_sign = (
             f"public_id={public_id}&timestamp={timestamp}"
             f"&transformation={IMAGE_INCOMING_TRANSFORMATION}"
         )
-        transformation = IMAGE_INCOMING_TRANSFORMATION
 
     signature = hashlib.sha1((to_sign + CLOUDINARY_API_SECRET).encode("utf-8")).hexdigest()
     return {
@@ -1259,17 +1276,22 @@ async def send_message(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
+    grpc_msg_type = (
+        chat_pb2.MESSAGE_TYPE_IMAGE if payload.type == "IMAGE"
+        else chat_pb2.MESSAGE_TYPE_VIDEO if payload.type == "VIDEO"
+        else chat_pb2.MESSAGE_TYPE_TEXT
+    )
+    msg_content = payload.content
+    if payload.type == "FILE" and not msg_content:
+        msg_content = f"[Tài liệu] {payload.file_name or 'Tập tin'}"
+
     grpc_request = chat_pb2.ChatMessage(
         message_id=payload.message_id or str(uuid.uuid4()),
         room_id=payload.room_id,
         sender_id=user_id,  # from the token, never from the client
-        content=payload.content,
+        content=msg_content,
         timestamp=int(time.time() * 1000),
-        type=(
-            chat_pb2.MESSAGE_TYPE_IMAGE if payload.type == "IMAGE"
-            else chat_pb2.MESSAGE_TYPE_VIDEO if payload.type == "VIDEO"
-            else chat_pb2.MESSAGE_TYPE_TEXT
-        ),
+        type=grpc_msg_type,
         media_url=payload.media_url or "",
         media_width=payload.media_width,
         media_height=payload.media_height,
@@ -1280,10 +1302,29 @@ async def send_message(
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
 
+    # Lưu trữ thêm metadata an toàn vào MongoDB (reply_to, file info)
+    if mongo_db is not None:
+        try:
+            up_fields = {}
+            if payload.reply_to:
+                up_fields["reply_to"] = payload.reply_to.model_dump()
+            if payload.type == "FILE":
+                up_fields["type"] = "FILE"
+                up_fields["file_name"] = payload.file_name
+                up_fields["file_size"] = payload.file_size
+                up_fields["media_url"] = payload.media_url
+            if up_fields:
+                mongo_db["messages"].update_one(
+                    {"_id": resp.message_id or grpc_request.message_id},
+                    {"$set": up_fields}
+                )
+        except Exception as ex:
+            log.warning("Could not persist extra fields to Mongo: %s", ex)
+
     asyncio.create_task(notify_new_message(
         room_id=payload.room_id,
         sender_id=user_id,
-        content=payload.content,
+        content=msg_content,
         msg_type=payload.type,
         stub=request.app.state.stub,
     ))
@@ -1344,12 +1385,17 @@ async def get_history(
         try:
             docs = mongo_db["messages"].find(
                 {"_id": {"$in": msg_ids}},
-                {"is_revoked": 1, "reactions": 1}
+                {"is_revoked": 1, "reactions": 1, "reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1}
             )
             for d in docs:
                 extra_map[d["_id"]] = {
                     "is_revoked": bool(d.get("is_revoked", False)),
                     "reactions": d.get("reactions") or {},
+                    "reply_to": d.get("reply_to"),
+                    "type": d.get("type"),
+                    "file_name": d.get("file_name"),
+                    "file_size": d.get("file_size"),
+                    "media_url": d.get("media_url"),
                 }
         except Exception:
             pass
@@ -1362,13 +1408,16 @@ async def get_history(
                 "sender_id": m.sender_id,
                 "content": "Tin nhắn đã được thu hồi" if extra_map.get(m.message_id, {}).get("is_revoked") else m.content,
                 "timestamp": m.timestamp,
-                "type": MESSAGE_TYPE_TO_API.get(m.type, "TEXT"),
-                "media_url": m.media_url,
+                "type": extra_map.get(m.message_id, {}).get("type") or MESSAGE_TYPE_TO_API.get(m.type, "TEXT"),
+                "media_url": extra_map.get(m.message_id, {}).get("media_url") or m.media_url,
                 "media_width": m.media_width,
                 "media_height": m.media_height,
                 "media_duration_ms": m.media_duration_ms,
                 "is_revoked": extra_map.get(m.message_id, {}).get("is_revoked", False),
                 "reactions": extra_map.get(m.message_id, {}).get("reactions", {}),
+                "reply_to": extra_map.get(m.message_id, {}).get("reply_to"),
+                "file_name": extra_map.get(m.message_id, {}).get("file_name"),
+                "file_size": extra_map.get(m.message_id, {}).get("file_size"),
             }
             for m in resp.messages
         ],
@@ -1644,6 +1693,8 @@ async def notify_new_message(room_id: str, sender_id: str, content: str, msg_typ
             body_text = "Đã gửi một hình ảnh 📷"
         elif msg_type == "VIDEO":
             body_text = "Đã gửi một video 🎬"
+        elif msg_type == "FILE":
+            body_text = "Đã gửi một tài liệu 📎"
 
         target_ids = [uid for uid in room.member_ids if uid != sender_id]
         await send_expo_push(target_ids, title=title, body=body_text, data={"roomId": room_id, "type": "chat"})
@@ -1746,7 +1797,7 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                     "timestamp": event.timestamp,
                 }
                 if event.event_type == chat_pb2.EVENT_NEW_MESSAGE:
-                    payload["message"] = {
+                    msg_obj = {
                         "message_id": event.message.message_id,
                         "room_id": event.message.room_id,
                         "sender_id": event.message.sender_id,
@@ -1758,6 +1809,25 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                         "media_height": event.message.media_height,
                         "media_duration_ms": event.message.media_duration_ms,
                     }
+                    if mongo_db is not None:
+                        try:
+                            extra_doc = mongo_db["messages"].find_one(
+                                {"_id": event.message.message_id},
+                                {"reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1}
+                            )
+                            if extra_doc:
+                                if extra_doc.get("reply_to"):
+                                    msg_obj["reply_to"] = extra_doc["reply_to"]
+                                if extra_doc.get("type"):
+                                    msg_obj["type"] = extra_doc["type"]
+                                if extra_doc.get("file_name"):
+                                    msg_obj["file_name"] = extra_doc["file_name"]
+                                    msg_obj["file_size"] = extra_doc.get("file_size", 0)
+                                if extra_doc.get("media_url"):
+                                    msg_obj["media_url"] = extra_doc["media_url"]
+                        except Exception:
+                            pass
+                    payload["message"] = msg_obj
                 elif event.event_type == chat_pb2.EVENT_FRIEND_REQUEST:
                     payload["friend_request"] = {
                         "request_id": event.friend_request.request_id,
