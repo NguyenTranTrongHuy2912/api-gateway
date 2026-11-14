@@ -12,7 +12,7 @@ from typing import Annotated, Literal, Optional
 
 from dotenv import load_dotenv
 
-load_dotenv(override=True)
+load_dotenv(override=False)
 
 import grpc
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
@@ -160,10 +160,16 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
         content={"detail": "Bạn gửi quá nhiều yêu cầu. Vui lòng thử lại sau 1 phút."},
     )
 
+ALLOWED_ORIGINS = [
+    orig.strip()
+    for orig in os.getenv("ALLOWED_ORIGINS", "").split(",")
+    if orig.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS if ALLOWED_ORIGINS else ["*"],
+    allow_credentials=bool(ALLOWED_ORIGINS),
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -212,7 +218,7 @@ class RegisterBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     account: str = Field(min_length=1, max_length=254)  # email
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=6, max_length=64)
     display_name: str = Field(min_length=1, max_length=50)
     otp_code: str = Field(min_length=1, max_length=10)
 
@@ -221,7 +227,7 @@ class LoginBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     account: str = Field(min_length=1, max_length=254)  # email
-    password: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=64)
 
 
 class CreateRoomBody(BaseModel):
@@ -311,31 +317,17 @@ async def request_otp(request: Request, payload: RequestOtpBody):
     if not account_clean or "@" not in account_clean:
         raise HTTPException(status_code=400, detail="Địa chỉ email không hợp lệ.")
 
-    # 1. Kiểm tra email đã đăng ký chưa
-    if mongo_db is not None:
-        existing = mongo_db["users"].find_one({"account": account_clean})
-        if existing:
-            raise HTTPException(status_code=409, detail="Email này đã được đăng ký tài khoản. Vui lòng đăng nhập.")
-
-    # 2. Thử gọi gRPC RequestOtp
     try:
         resp = await request.app.state.auth_stub.RequestOtp(
             chat_pb2.RequestOtpRequest(account=account_clean), timeout=GRPC_TIMEOUT
         )
-        # Gửi thêm email thật qua Gmail SMTP để đảm bảo 100% người dùng nhận được mail
-        try:
-            generate_and_save_otp(mongo_db, account_clean, purpose="register")
-        except Exception:
-            pass
         return {
             "expires_in_seconds": resp.expires_in_seconds,
             "resend_after_seconds": resp.resend_after_seconds,
             "message": "Đã gửi mã xác thực OTP về email của bạn.",
         }
     except grpc.RpcError as e:
-        # Nếu gRPC thất bại (ví dụ gRPC backend chưa bật SMTP), dùng trực tiếp Python SMTP
-        log.warning("gRPC RequestOtp error: %s. Chuyển sang gửi trực tiếp qua Gateway SMTP", e)
-        return generate_and_save_otp(mongo_db, account_clean, purpose="register")
+        raise to_http_error(e, expose_details=True)
 
 
 @app.post("/api/v1/auth/forgot-password")
@@ -375,13 +367,10 @@ async def reset_password(request: Request, payload: ResetPasswordBody):
 
 
 @app.post("/api/v1/auth/register")
-async def register(payload: RegisterBody, request: Request):
+@limiter.limit("5/minute")
+async def register(request: Request, payload: RegisterBody):
     account_clean = payload.account.strip().lower()
     otp_clean = payload.otp_code.strip()
-
-    # Xác thực OTP qua MongoDB nếu có lưu
-    if mongo_db is not None:
-        verify_otp_code(mongo_db, account_clean, otp_clean, purpose="register")
 
     try:
         resp = await request.app.state.auth_stub.Register(
@@ -393,38 +382,15 @@ async def register(payload: RegisterBody, request: Request):
             ),
             timeout=GRPC_TIMEOUT,
         )
-        role = get_user_role(resp.user_id, account_clean)
+        role = getattr(resp, "role", None) or get_user_role(resp.user_id, account_clean)
         return {
             "token": create_token(resp.user_id, role=role),
             "user_id": resp.user_id,
             "display_name": resp.display_name,
             "role": role,
+            "avatar_url": getattr(resp, "avatar_url", "") or "",
         }
     except grpc.RpcError as e:
-        # Nếu gRPC thất bại nhưng OTP đã được verify thành công ở trên, tạo trực tiếp trong Mongo
-        if mongo_db is not None:
-            existing = mongo_db["users"].find_one({"account": account_clean})
-            if existing:
-                raise HTTPException(status_code=409, detail="Email này đã được đăng ký.")
-            new_id = str(uuid.uuid4())
-            hashed_pw = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
-            now_ms = int(time.time() * 1000)
-            mongo_db["users"].insert_one({
-                "_id": new_id,
-                "account": account_clean,
-                "password_hash": hashed_pw,
-                "display_name": payload.display_name.strip() or account_clean.split("@")[0],
-                "role": "USER",
-                "is_active": True,
-                "created_at": now_ms,
-            })
-            set_user_role(new_id, "USER")
-            return {
-                "token": create_token(new_id, role="USER"),
-                "user_id": new_id,
-                "display_name": payload.display_name.strip() or account_clean.split("@")[0],
-                "role": "USER",
-            }
         raise to_http_error(e, expose_details=True)
 
 
@@ -520,7 +486,7 @@ async def get_admin_users(
 
     query = {}
     if q and q.strip():
-        search_term = q.strip()
+        search_term = re.escape(q.strip())
         query = {
             "$or": [
                 {"account": {"$regex": search_term, "$options": "i"}},
@@ -550,6 +516,9 @@ async def update_user_role_admin(
     body: SetUserRoleBody,
     admin_id: str = Depends(get_current_admin),
 ):
+    if target_user_id == admin_id and body.role != "ADMIN":
+        raise HTTPException(status_code=400, detail="Không thể tự hạ quyền Admin của chính mình.")
+
     set_user_role(target_user_id, body.role)
     if mongo_db is not None:
         mongo_db["users"].update_one(
@@ -570,11 +539,25 @@ async def update_user_status_admin(
     body: SetUserStatusBody,
     admin_id: str = Depends(get_current_admin),
 ):
+    if target_user_id == admin_id and not body.is_active:
+        raise HTTPException(status_code=400, detail="Không thể tự khóa tài khoản của chính mình.")
+
     if mongo_db is not None:
         mongo_db["users"].update_one(
             {"_id": target_user_id},
             {"$set": {"is_active": body.is_active}}
         )
+
+    # Nếu tài khoản bị khóa, lập tức thu hồi token và cắt đứt kết nối WebSocket
+    if not body.is_active:
+        revoke_user_tokens(target_user_id)
+        if target_user_id in active_user_connections:
+            for ws in list(active_user_connections[target_user_id]):
+                try:
+                    asyncio.create_task(ws.close(code=status.WS_1008_POLICY_VIOLATION))
+                except Exception:
+                    pass
+
     return {
         "ok": True,
         "user_id": target_user_id,
@@ -635,37 +618,7 @@ async def create_user_admin(
     if not otp_clean:
         raise HTTPException(status_code=400, detail="Vui lòng nhập mã xác thực OTP đã được gửi về email.")
 
-    # 1. Bắt buộc kiểm tra mã OTP đã gửi về email
-    if mongo_db is not None:
-        verify_otp_code(mongo_db, account_clean, otp_clean, purpose="register")
-
-        existing = mongo_db["users"].find_one({"account": account_clean})
-        if existing:
-            raise HTTPException(status_code=400, detail="Tài khoản email này đã tồn tại trong hệ thống.")
-
-        new_id = str(uuid.uuid4())
-        hashed_pw = hashlib.sha256(payload.password.encode("utf-8")).hexdigest()
-        now_ms = int(time.time() * 1000)
-        mongo_db["users"].insert_one({
-            "_id": new_id,
-            "account": account_clean,
-            "password_hash": hashed_pw,
-            "display_name": payload.display_name.strip() or account_clean.split("@")[0],
-            "role": payload.role,
-            "is_active": True,
-            "created_at": now_ms,
-        })
-        set_user_role(new_id, payload.role)
-        return {
-            "ok": True,
-            "user_id": new_id,
-            "display_name": payload.display_name.strip() or account_clean.split("@")[0],
-            "account": account_clean,
-            "role": payload.role,
-            "message": "Đã xác thực OTP và tạo tài khoản người dùng thành công!",
-        }
-
-    # 2. Hoặc fallback qua gRPC Register
+    # Đăng ký qua gRPC Backend chuẩn mật khẩu BCrypt
     try:
         resp = await request.app.state.auth_stub.Register(
             chat_pb2.RegisterRequest(
@@ -698,6 +651,16 @@ async def delete_user_admin(
         raise HTTPException(status_code=400, detail="Không thể xóa tài khoản của chính mình.")
     if mongo_db is not None:
         mongo_db["users"].delete_one({"_id": target_user_id})
+
+    # Lập tức thu hồi token và cắt WebSocket của user bị xóa
+    revoke_user_tokens(target_user_id)
+    if target_user_id in active_user_connections:
+        for ws in list(active_user_connections[target_user_id]):
+            try:
+                asyncio.create_task(ws.close(code=status.WS_1008_POLICY_VIOLATION))
+            except Exception:
+                pass
+
     return {"ok": True, "user_id": target_user_id, "message": "Đã xóa tài khoản thành công."}
 
 # ------------------------------------------------------------------ Users
@@ -1387,6 +1350,16 @@ async def handle_call_signal(ws: WebSocket, sender_user_id: str, data: dict, stu
                 "message": "Người dùng đang có cuộc gọi khác."
             })
 
+    elif msg_type == "USER_NOTE_BROADCAST":
+        asyncio.create_task(broadcast_ws_event({
+            "type": "USER_NOTE_BROADCAST",
+            "user_id": sender_user_id,
+            "display_name": data.get("display_name", ""),
+            "note": data.get("note", ""),
+            "created_at": data.get("created_at"),
+            "expires_at": data.get("expires_at"),
+        }))
+
 
 
 async def broadcast_ws_event(payload: dict):
@@ -1465,8 +1438,17 @@ async def notify_new_message(room_id: str, sender_id: str, content: str, msg_typ
 
 
 @app.get("/api/v1/users/online")
-async def get_online_users(user_id: str = Depends(get_current_user)):
-    return {"online_user_ids": list(active_user_connections.keys())}
+async def get_online_users(request: Request, user_id: str = Depends(get_current_user)):
+    """Bảo mật quyền riêng tư: Chỉ trả về trạng thái của bạn bè đang Online, không để lộ tài khoản Admin hay người lạ."""
+    try:
+        resp = await request.app.state.stub.ListFriends(
+            chat_pb2.ListFriendsReq(user_id=user_id),
+            timeout=GRPC_TIMEOUT,
+        )
+        friend_ids = {f.user_id for f in resp.friends}
+        return {"online_user_ids": [uid for uid in active_user_connections.keys() if uid in friend_ids]}
+    except Exception:
+        return {"online_user_ids": []}
 
 
 @app.post("/api/v1/users/push-token")
@@ -1499,11 +1481,20 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
         active_user_connections[user_id] = set()
     active_user_connections[user_id].add(websocket)
 
-    # Gửi danh sách online ban đầu cho client vừa kết nối
+    # Gửi danh sách online ban đầu cho client vừa kết nối (Bảo mật: chỉ gửi bạn bè đang online)
+    friend_ids = set()
+    try:
+        f_resp = await websocket.app.state.stub.ListFriends(
+            chat_pb2.ListFriendsReq(user_id=user_id), timeout=3.0
+        )
+        friend_ids = {f.user_id for f in f_resp.friends}
+    except Exception:
+        pass
+    online_friends = [uid for uid in active_user_connections.keys() if uid in friend_ids]
     try:
         await websocket.send_json({
             "type": "INITIAL_PRESENCE",
-            "online_user_ids": list(active_user_connections.keys()),
+            "online_user_ids": online_friends,
         })
     except Exception:
         pass
@@ -1565,6 +1556,9 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                     payload["user_id"] = event.user_id
                 elif event.event_type == chat_pb2.EVENT_ROOM_UPDATED:
                     payload["room_id"] = event.room.room_id
+                elif event.event_type == chat_pb2.EVENT_READ_RECEIPT:
+                    payload["user_id"] = event.user_id
+                    payload["room_id"] = event.room.room_id
                 await websocket.send_json(payload)
         except asyncio.CancelledError:
             ended_by_cancel = True
@@ -1594,7 +1588,10 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                 continue
             try:
                 msg_data = json.loads(text)
-                if isinstance(msg_data, dict) and msg_data.get("type", "").startswith("CALL_"):
+                if isinstance(msg_data, dict) and (
+                    msg_data.get("type", "").startswith("CALL_")
+                    or msg_data.get("type") in ("ICE_CANDIDATE", "USER_NOTE_BROADCAST")
+                ):
                     await handle_call_signal(websocket, user_id, msg_data, stub)
             except Exception as e:
                 log.debug("WS incoming parse error: %s", e)

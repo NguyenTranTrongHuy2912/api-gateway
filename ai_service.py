@@ -41,16 +41,13 @@ CANDIDATE_MODELS = [
 ]
 
 HQ_AI_SYSTEM_INSTRUCTION = (
-    "Bạn là HQ AI 🤖✨ — Trợ lý trí tuệ nhân tạo thông minh, hiện đại, thân thiện và chuyên nghiệp được tích hợp trong ứng dụng ChatApp.\n"
-    "Dự án ChatApp được xây dựng theo kiến trúc Microservices 3 tầng độc lập chuẩn Clean Architecture:\n"
-    "• Frontend: React Native + Expo SDK 58 + Expo Router (bảo vệ bằng Stack.Protected) + Redux Toolkit & RTK Query + Tamagui.\n"
-    "• API Gateway: FastAPI (Python 3.13) BFF, bảo mật JWT, WebSocket realtime và Trợ lý HQ AI.\n"
-    "• Core Backend: Java 21 Netty gRPC kết nối MongoDB Atlas Cloud và Jakarta Mail OTP.\n\n"
+    "Bạn là HQ AI 🤖✨ — Trợ lý trí tuệ nhân tạo thông minh, đa năng, thân thiện và chuyên nghiệp được tích hợp trong ứng dụng ChatApp.\n"
+    "Bạn có kiến thức sâu rộng về mọi lĩnh vực: Khoa học, Lịch sử, Đời sống, Toán học, Lập trình và Công nghệ.\n\n"
     "NGUYÊN TẮC TRẢ LỜI CỐT LÕI:\n"
-    "1. Luôn trả lời bằng tiếng Việt tự nhiên, súc tích, đi thẳng vào trọng tâm câu hỏi của người dùng.\n"
-    "2. Khi trả lời về khoa học, lịch sử, đời sống: giải thích chính xác, dễ hiểu, sinh động.\n"
+    "1. Luôn trả lời bằng tiếng Việt tự nhiên, chính xác, súc tích và giải thích dễ hiểu, đi thẳng vào câu hỏi của người dùng.\n"
+    "2. TUYỆT ĐỐI KHÔNG TỰ Ý nhắc đến kiến trúc ChatApp hay kỹ thuật lập trình trừ khi người dùng ĐẶC BIỆT hỏi về kiến trúc ChatApp hoặc hệ thống này.\n"
     "3. Định dạng bằng Markdown đẹp mắt: dùng gạch đầu dòng (•), in đậm từ khóa quan trọng (**từ khóa**), dùng khối mã (```language) khi viết code.\n"
-    "4. Tuyệt đối không dài dòng, không chào hỏi lặp lại rườm rà nếu không cần thiết.\n"
+    "4. Khi người dùng hỏi về dự án ChatApp: Giới thiệu hệ thống 3 tầng Microservices: Mobile Frontend (React Native + Expo SDK 58), API Gateway (FastAPI Python), Core Backend (Java 21 Netty gRPC).\n"
     "5. Nếu người dùng yêu cầu tóm tắt phòng chat: Nêu đúng 3 phần rõ ràng: 📌 Chủ đề trao đổi, 🤝 Đã thống nhất, ⏰ Lịch hẹn & Việc cần làm."
 )
 
@@ -159,13 +156,26 @@ def _solve_math_expression(prompt: str) -> Optional[str]:
     return None
 
 
+def strip_accents(s: str) -> str:
+    """Loại bỏ dấu tiếng Việt để so khớp từ khóa chính xác tuyệt đối"""
+    s = re.sub(r'[àáạảãâầấậẩẫăằắặẳẵ]', 'a', s)
+    s = re.sub(r'[èéẹẻẽêềếệểễ]', 'e', s)
+    s = re.sub(r'[òóọỏõôồốộổỗơờớợởỡ]', 'o', s)
+    s = re.sub(r'[ùúụủũưừứựửữ]', 'u', s)
+    s = re.sub(r'[ìíịỉĩ]', 'i', s)
+    s = re.sub(r'[đ]', 'd', s)
+    s = re.sub(r'[ỳýỵỷỹ]', 'y', s)
+    return s
+
+
 def _smart_fallback_reply(prompt: str) -> str:
     """
     Bộ não tri thức nội bộ được thiết kế chuyên sâu:
-    - Giải quyết chuẩn xác các câu hỏi phổ thông về Khoa học, Lịch sử, Lập trình, Toán học, Đời sống.
-    - Dùng Regular Expression Word Boundaries (\b) để không bao giờ so khớp nhầm các từ con.
+    - Chuẩn hóa văn bản tiếng Việt không dấu (strip accents) kết hợp Regex boundary.
+    - Giải quyết chuẩn xác câu hỏi phổ thông về Khoa học, Lịch sử, Lập trình, Toán học, Đời sống.
     """
     p_lower = prompt.lower().strip()
+    p_norm = strip_accents(p_lower)
 
     # 1. Giải toán & Phần trăm
     math_res = _solve_math_expression(prompt)
@@ -173,7 +183,7 @@ def _smart_fallback_reply(prompt: str) -> str:
         return math_res
 
     # 2. Khoa học tự nhiên: Bầu trời có màu xanh lam
-    if any(k in p_lower for k in ["bầu trời", "bau troi"]) and any(k in p_lower for k in ["xanh", "mau xanh"]):
+    if "bau troi" in p_norm and ("xanh" in p_norm or "mau xanh" in p_norm):
         return (
             "🌌 **Tại sao bầu trời có màu xanh lam?**\n\n"
             "Bầu trời ban ngày có màu xanh lam là nhờ hiện tượng **Tán xạ Rayleigh (Rayleigh Scattering)** trong khí quyển:\n\n"
@@ -184,33 +194,65 @@ def _smart_fallback_reply(prompt: str) -> str:
         )
 
     # 2.1 Phát minh ra điện / Lịch sử dòng điện
-    if ("phat minh" in p_lower or "tim ra" in p_lower or "ai" in p_lower) and ("dien" in p_lower or "dong dien" in p_lower or "dien nang" in p_lower):
+    if ("phat minh" in p_norm or "tim ra" in p_norm or "ai" in p_norm) and ("dien" in p_norm or "dong dien" in p_norm or "dien nang" in p_norm):
         return (
             "⚡ **Ai là người phát minh / tìm ra điện?**\n\n"
-            "Điện là một hiện tượng tự nhiên nên không có một cá nhân duy nhất \"phát minh\" ra nó, mà là thành quả khám phá và hoàn thiện của nhiều nhà khoa học vĩ đại qua các thế kỷ:\n\n"
-            "• **Benjamin Franklin (1752):** Nổi tiếng với thí nghiệm thả diều trong giông bão, chứng minh sét thực chất là một dạng của điện năng.\n"
-            "• **Alessandro Volta (1800):** Phát minh ra pin điện đầu tiên (Voltaic Pile), tạo ra dòng điện ổn định và liên tục (đơn vị điện thế Volt mang tên ông).\n"
-            "• **Michael Faraday (1831):** Khám phá hiện tượng cảm ứng điện từ, đặt nền móng khai sinh ra máy phát điện và động cơ điện hiện đại.\n"
-            "• **Thomas Edison & Nikola Tesla (Cuối thế kỷ 19):** Thomas Edison phát minh ra bóng đèn thương mại và lưới điện một chiều (DC); Nikola Tesla phát minh ra dòng điện xoay chiều (AC) - tiêu chuẩn cung cấp năng lượng cho toàn thế giới ngày nay."
+            "Điện là một hiện tượng tự nhiên tồn tại sẵn trong vũ trụ nên không có một cá nhân duy nhất \"phát minh\" ra nó, mà là thành quả khám phá và hoàn thiện của nhiều nhà khoa học vĩ đại qua các thế kỷ:\n\n"
+            "• **Benjamin Franklin (1752):** Thí nghiệm thả diều trong giông bão nổi tiếng, chứng minh sét thực chất là dòng điện tự nhiên.\n"
+            "• **Alessandro Volta (1800):** Phát minh ra pin điện hóa học đầu tiên (Voltaic Pile), tạo ra dòng điện một chiều liên tục (đơn vị điện thế Volt mang tên ông).\n"
+            "• **Michael Faraday (1831):** Khám phá định luật cảm ứng điện từ, đặt nền móng chế tạo máy phát điện và động cơ điện hiện đại.\n"
+            "• **Thomas Edison (1879):** Hoàn thiện bóng đèn sợi đốt thương mại và xây dựng hệ thống lưới điện DC đầu tiên.\n"
+            "• **Nikola Tesla (Cuối thế kỷ 19):** Thiên tài phát minh dòng điện xoay chiều (AC), máy biến áp và động cơ không đồng bộ — nền tảng cung cấp điện năng cho toàn thế giới ngày nay!"
+        )
+
+    # 2.2 Vận tốc ánh sáng
+    if "van toc" in p_norm and "anh sang" in p_norm:
+        return (
+            "⚡ **Vận tốc của ánh sáng:**\n\n"
+            "• Trong chân không, vận tốc ánh sáng (ký hiệu là **c**) là một hằng số vật lý phổ quát:\n"
+            "  **c ≈ 299.792.458 m/s** (xấp xỉ **300.000 km/s**).\n"
+            "• Với tốc độ này, ánh sáng có thể đi vòng quanh Trái Đất khoảng 7,5 lần chỉ trong đúng 1 giây!"
+        )
+
+    # 2.3 Trái Đất và Hệ Mặt Trời
+    if "trai dat" in p_norm and ("mat troi" in p_norm or "quay" in p_norm or "quy dao" in p_norm):
+        return (
+            "🌍 **Chu kỳ chuyển động của Trái Đất:**\n\n"
+            "• **Quay quanh Mặt Trời:** Mất khoảng **365 ngày 5 giờ 48 phút 46 giây** (tương đương 365,25 ngày), tạo ra 4 mùa trong năm. Phần dư xấp xỉ 6 giờ mỗi năm tạo nên năm nhuận (cứ 4 năm thêm 1 ngày 29/2).\n"
+            "• **Tự quay quanh trục:** Mất khoảng **23 giờ 56 phút 4 giây** (1 ngày thiên văn), tạo nên hiện tượng ngày và đêm luân phiên."
+        )
+
+    # 2.4 Nhiệt độ sôi của nước
+    if ("nuoc" in p_norm and "soi" in p_norm) or "nhiet do soi" in p_norm:
+        return (
+            "💧 **Nhiệt độ sôi của nước:**\n\n"
+            "• Ở điều kiện áp suất khí quyển tiêu chuẩn tại mực nước biển (1 atm = 101.325 Pa), nước tinh khiết sôi ở **100°C** (**212°F**).\n"
+            "• Ở độ cao lớn hơn (ví dụ trên đỉnh núi cao, áp suất không khí giảm), nước sẽ sôi ở nhiệt độ thấp hơn 100°C."
         )
 
     # 3. Lịch sử Việt Nam: Bác Hồ / Chủ tịch Hồ Chí Minh
-    if any(k in p_lower for k in ["bác hồ", "bac ho", "hồ chí minh", "ho chi minh"]):
-        if any(k in p_lower for k in ["sinh", "năm bao nhiêu", "ngay sinh", "que", "ở đâu"]):
-            return (
-                "🇻🇳 **Thông tin về Chủ tịch Hồ Chí Minh (Bác Hồ):**\n\n"
-                "• **Ngày sinh:** **19 tháng 5 năm 1890**.\n"
-                "• **Quê quán:** Làng Sen (Kim Liên), xã Kim Liên, huyện Nam Đàn, tỉnh Nghệ An.\n"
-                "• **Tên thuở nhỏ:** Nguyễn Sinh Cung; khi đi học lấy tên là Nguyễn Tất Thành; giai đoạn hoạt động cách mạng lấy tên Nguyễn Ái Quốc.\n"
-                "• **Ngày mất:** **02 tháng 9 năm 1969** tại thủ đô Hà Nội, hưởng thọ 79 tuổi.\n\n"
-                "Bác Hồ là vị lãnh tụ vĩ đại của dân tộc Việt Nam, danh nhân văn hóa thế giới, người đã đọc bản Tuyên ngôn Độc lập khai sinh ra nước Việt Nam Dân chủ Cộng hòa vào ngày 2/9/1945 tại Quảng trường Ba Đình."
-            )
+    if any(k in p_norm for k in ["bac ho", "ho chi minh", "nguyen ai quoc", "nguyen sinh cung"]):
+        return (
+            "🇻🇳 **Thông tin về Chủ tịch Hồ Chí Minh (Bác Hồ):**\n\n"
+            "• **Ngày sinh:** **19 tháng 5 năm 1890**.\n"
+            "• **Quê quán:** Làng Sen (Kim Liên), xã Kim Liên, huyện Nam Đàn, tỉnh Nghệ An.\n"
+            "• **Tên thuở nhỏ:** Nguyễn Sinh Cung; khi đi học lấy tên là Nguyễn Tất Thành; thời kỳ hoạt động cách mạng lấy tên Nguyễn Ái Quốc.\n"
+            "• **Ngày mất:** **02 tháng 9 năm 1969** tại thủ đô Hà Nội, hưởng thọ 79 tuổi.\n\n"
+            "Bác Hồ là vị lãnh tụ vĩ đại của dân tộc Việt Nam, danh nhân văn hóa thế giới, người đã đọc bản Tuyên ngôn Độc lập khai sinh ra nước Việt Nam Dân chủ Cộng hòa vào ngày 2/9/1945 tại Quảng trường Ba Đình."
+        )
+
+    # 3.1 Địa lý Việt Nam: Thủ đô
+    if "thu do" in p_norm and "viet nam" in p_norm:
+        return (
+            "🇻🇳 **Thủ đô của nước Cộng hòa Xã hội Chủ nghĩa Việt Nam** là **Thành phố Hà Nội**.\n\n"
+            "Hà Nội là trung tâm đầu não chính trị, hành chính quốc gia, đồng thời là trung tâm lớn về văn hóa, khoa học, giáo dục, kinh tế và giao dịch quốc tế của cả nước."
+        )
 
     # 4. Kiến trúc và công nghệ ChatApp (Chỉ trả lời khi người dùng hỏi cụ thể về ChatApp hoặc đồ án)
     is_asking_app_arch = (
-        ("kien truc" in p_lower or "3 tang" in p_lower or "he thong" in p_lower or "cong nghe" in p_lower)
-        and ("chatapp" in p_lower or "do an" in p_lower or "ung dung" in p_lower or "app" in p_lower or "du an" in p_lower)
-    ) or ("fastapi" in p_lower and "grpc" in p_lower) or ("microservices" in p_lower and "chatapp" in p_lower)
+        ("kien truc" in p_norm or "3 tang" in p_norm or "he thong" in p_norm or "cong nghe" in p_norm)
+        and ("chatapp" in p_norm or "do an" in p_norm or "ung dung" in p_norm or "app" in p_norm or "du an" in p_norm)
+    ) or ("fastapi" in p_norm and "grpc" in p_norm) or ("microservices" in p_norm and "chatapp" in p_norm)
 
     if is_asking_app_arch:
         return (
@@ -244,15 +286,15 @@ def _smart_fallback_reply(prompt: str) -> str:
         )
 
     # 6. Lập trình & Kỹ thuật
-    if any(k in p_lower for k in ["react native", "expo", "fastapi", "grpc", "redux", "tamagui", "mongodb", "clean code", "solid"]):
-        if "react native" in p_lower or "expo" in p_lower:
+    if any(k in p_norm for k in ["react native", "expo", "fastapi", "grpc", "redux", "tamagui", "mongodb", "clean code", "solid", "python", "java", "typescript"]):
+        if "react native" in p_norm or "expo" in p_norm:
             return (
                 "💻 **Kiến thức React Native & Expo SDK 58:**\n\n"
                 "• **Bàn phím không che nội dung:** Sử dụng `KeyboardAvoidingView` với `behavior={Platform.OS === 'ios' ? 'padding' : undefined}`.\n"
                 "• **Tối ưu danh sách tin nhắn:** Đặt `initialNumToRender={10}`, `windowSize={5}` và bọc `React.memo` cho item tin nhắn để cuộn 60 FPS mượt mà.\n"
                 "• **Định tuyến Expo Router:** Mỗi file trong thư mục `app/` là một route; bọc `_layout.tsx` để cấu hình header và thanh điều hướng."
             )
-        if "clean code" in p_lower or "solid" in p_lower:
+        if "clean code" in p_norm or "solid" in p_norm:
             return (
                 "📐 **Nguyên tắc Clean Code & SOLID trong dự án:**\n\n"
                 "1. **Single Responsibility (SRP):** Mỗi hàm/component chỉ làm một việc duy nhất (tách riêng Hook lấy dữ liệu và Component hiển thị).\n"
@@ -266,14 +308,14 @@ def _smart_fallback_reply(prompt: str) -> str:
         )
 
     # 7. Lời chúc mừng sinh nhật / lễ tết
-    if any(k in p_lower for k in ["chúc sinh nhật", "sinh nhat", "chúc mừng", "chúc tết"]):
+    if any(k in p_norm for k in ["chuc sinh nhat", "sinh nhat", "chuc mung", "chuc tet"]):
         return (
             "🎉 **Gợi ý lời chúc ý nghĩa & chân thành:**\n\n"
             "\"*Chúc bạn có một ngày sinh nhật thật ấm áp, ngập tràn niềm vui, tiếng cười và luôn thành công trên con đường mình đã chọn nhé! Happy Birthday!* 🎂🎈💐\""
         )
 
     # 8. Mẫu đơn xin nghỉ học / nghỉ làm
-    if any(k in p_lower for k in ["nghỉ học", "nghi hoc", "xin nghỉ", "email xin phép"]):
+    if any(k in p_norm for k in ["nghi hoc", "xin nghi", "email xin phep"]):
         return (
             "📝 **Mẫu đơn xin nghỉ học/làm chuẩn mực & lịch sự:**\n\n"
             "**Tiêu đề:** Đơn xin phép nghỉ [học/làm] - [Họ và tên] - Ngày [dd/mm/yyyy]\n\n"
@@ -286,7 +328,7 @@ def _smart_fallback_reply(prompt: str) -> str:
         )
 
     # 9. Dịch thuật tiếng Anh - Việt
-    if any(k in p_lower for k in ["dịch", "translate", "tiếng anh", "tiếng việt"]):
+    if any(k in p_norm for k in ["dich", "translate", "tieng anh", "tieng viet"]):
         clean_target = re.sub(r"(?i)\b(dịch sang tiếng anh|dịch sang tiếng việt|dịch|translate)\b[\s:]*", "", prompt).strip()
         if clean_target:
             return (
@@ -295,12 +337,12 @@ def _smart_fallback_reply(prompt: str) -> str:
                 f"💡 *Mẹo: Bạn có thể thêm ngữ cảnh giao tiếp (trang trọng, thân mật) để nhận bản dịch tự nhiên nhất.*"
             )
 
-    # 10. Trả lời thông minh tổng quát cho các câu hỏi khác
+    # 10. Trả lời thông minh tổng quát
     return (
         f"🤖 **HQ AI:**\n\n"
-        f"Về câu hỏi **\"{prompt}\"** của bạn:\n"
-        f"• Đây là một vấn đề rất thú vị. Tôi có thể giúp bạn giải đáp cặn kẽ dựa trên cơ sở khoa học và thực tế.\n"
-        f"• Bạn có thể chia sẻ thêm mục đích hoặc chi tiết hơn để tôi đưa ra câu trả lời đầy đủ và chính xác nhất cho bạn nhé!"
+        f"Tôi đã tiếp nhận câu hỏi của bạn: **\"{prompt}\"**.\n\n"
+        f"• Vấn đề này có nhiều khía cạnh thú vị. Bạn có thể nêu rõ thêm mục đích sử dụng (học tập, lập trình hay đời sống) để tôi giải đáp chi tiết nhất nhé!\n"
+        f"• *Mẹo:* Bạn cũng có thể kích hoạt toàn bộ sức mạnh Gemini 2.5 Flash bằng cách cấu hình `GEMINI_API_KEY` mới trong file `.env`."
     )
 
 

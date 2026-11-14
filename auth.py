@@ -7,10 +7,13 @@ from fastapi import Header, HTTPException
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
-load_dotenv()
+load_dotenv(override=False)
 JWT_SECRET = os.environ.get("JWT_SECRET")
 JWT_ALGO = "HS256"
 JWT_EXPIRE_DAYS = int(os.getenv("JWT_EXPIRE_DAYS", "3"))
+
+if not JWT_SECRET:
+    raise RuntimeError("Biến môi trường JWT_SECRET chưa được cấu hình. Hệ thống từ chối khởi động để bảo vệ an toàn.")
 
 # Bộ nhớ lưu mốc thời gian thu hồi token khi đổi mật khẩu: user_id -> timestamp (giây)
 REVOCATION_TIMESTAMPS: dict[str, int] = {}
@@ -117,13 +120,31 @@ def get_current_user(authorization: str = Header(default="")) -> str:
         user_id = payload.get("sub")
         token_iat = payload.get("iat", 0)
 
-        # Kiểm tra token có bị vô hiệu hóa do đổi mật khẩu không
+        # Kiểm tra token có bị vô hiệu hóa do đổi mật khẩu không (bộ nhớ tạm RAM)
         revoked_at = REVOCATION_TIMESTAMPS.get(user_id, 0)
         if revoked_at > 0 and token_iat < revoked_at:
             raise HTTPException(
                 status_code=401,
                 detail="Phiên đăng nhập đã hết hạn do mật khẩu đã thay đổi. Vui lòng đăng nhập lại.",
             )
+
+        # Kiểm tra trạng thái tài khoản và mốc đổi mật khẩu lưu trữ trong Database (P1-1 & P1-2)
+        if _auth_mongo_db is not None:
+            user_doc = _auth_mongo_db["users"].find_one(
+                {"_id": user_id},
+                {"is_active": 1, "password_changed_at": 1}
+            )
+            if user_doc:
+                if user_doc.get("is_active") is False:
+                    raise HTTPException(status_code=403, detail="Tài khoản của bạn đã bị khóa bởi Quản trị viên.")
+                pwd_changed = user_doc.get("password_changed_at")
+                if pwd_changed:
+                    changed_sec = int(pwd_changed / 1000 if pwd_changed > 1e11 else pwd_changed)
+                    if token_iat < changed_sec:
+                        raise HTTPException(
+                            status_code=401,
+                            detail="Phiên đăng nhập đã hết hạn do mật khẩu đã thay đổi. Vui lòng đăng nhập lại.",
+                        )
 
         return user_id
     except jwt.ExpiredSignatureError:
@@ -150,13 +171,32 @@ def get_current_admin(authorization: str = Header(default="")) -> str:
                 detail="Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.",
             )
 
-        # Kiểm tra thêm quyền thực tế trong Database/RAM
+        # Kiểm tra quyền thực tế trong Database/RAM và trạng thái tài khoản (P1-1 & P1-2)
         real_role = get_user_role(user_id)
-        if role != "ADMIN" and real_role != "ADMIN":
+        if role != "ADMIN" or real_role != "ADMIN":
             raise HTTPException(
                 status_code=403,
                 detail="Bạn không có quyền Quản trị viên (ADMIN) để thực hiện thao tác này.",
             )
+
+        if _auth_mongo_db is not None:
+            user_doc = _auth_mongo_db["users"].find_one(
+                {"_id": user_id},
+                {"is_active": 1, "password_changed_at": 1, "role": 1}
+            )
+            if user_doc:
+                if user_doc.get("is_active") is False:
+                    raise HTTPException(status_code=403, detail="Tài khoản Quản trị viên đã bị khóa.")
+                if user_doc.get("role") != "ADMIN":
+                    raise HTTPException(status_code=403, detail="Tài khoản đã bị thu hồi quyền Quản trị viên.")
+                pwd_changed = user_doc.get("password_changed_at")
+                if pwd_changed:
+                    changed_sec = int(pwd_changed / 1000 if pwd_changed > 1e11 else pwd_changed)
+                    if token_iat < changed_sec:
+                        raise HTTPException(
+                            status_code=401,
+                            detail="Phiên đăng nhập đã hết hạn do mật khẩu đã thay đổi. Vui lòng đăng nhập lại.",
+                        )
 
         return user_id
     except jwt.ExpiredSignatureError:
@@ -165,19 +205,37 @@ def get_current_admin(authorization: str = Header(default="")) -> str:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-def decode_token(token: str) -> Optional[dict]:
-    """Giải mã token không ném exception, trả về None nếu lỗi hoặc token bị thu hồi."""
+def decode_token(token: str) -> Optional[str]:
+    """Giải mã token không ném exception, trả về user_id (str) hoặc None nếu lỗi / bị thu hồi / bị khóa."""
     if not token:
         return None
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
         user_id = payload.get("sub")
+        if not user_id:
+            return None
         token_iat = payload.get("iat", 0)
 
+        # Kiểm tra token có bị thu hồi do đổi mật khẩu (RAM)
         revoked_at = REVOCATION_TIMESTAMPS.get(user_id, 0)
         if revoked_at > 0 and token_iat < revoked_at:
             return None
 
-        return payload
+        # Kiểm tra tài khoản có bị khóa hoặc đổi mật khẩu (Database)
+        if _auth_mongo_db is not None:
+            user_doc = _auth_mongo_db["users"].find_one(
+                {"_id": user_id},
+                {"is_active": 1, "password_changed_at": 1}
+            )
+            if user_doc:
+                if user_doc.get("is_active") is False:
+                    return None
+                pwd_changed = user_doc.get("password_changed_at")
+                if pwd_changed:
+                    changed_sec = int(pwd_changed / 1000 if pwd_changed > 1e11 else pwd_changed)
+                    if token_iat < changed_sec:
+                        return None
+
+        return str(user_id)
     except jwt.PyJWTError:
         return None

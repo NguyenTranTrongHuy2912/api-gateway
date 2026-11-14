@@ -13,12 +13,14 @@ from fastapi import HTTPException
 
 log = logging.getLogger("gateway.email")
 
-SMTP_HOST = os.getenv("SMTP_HOST")
-SMTP_PORT = int(os.getenv("SMTP_PORT"))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
-SMTP_FROM = os.getenv("SMTP_FROM")
-OTP_SECRET = os.getenv("OTP_SECRET").encode("utf-8")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+_smtp_port_raw = os.getenv("SMTP_PORT", "587")
+SMTP_PORT = int(_smtp_port_raw) if _smtp_port_raw and _smtp_port_raw.isdigit() else 587
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM = os.getenv("SMTP_FROM", "")
+_otp_secret_raw = os.getenv("OTP_SECRET", "default_secret_key_change_in_production")
+OTP_SECRET = _otp_secret_raw.encode("utf-8")
 
 TTL_SECONDS = 300  # 5 phút
 RESEND_SECONDS = 60 # 60 giây
