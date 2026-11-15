@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse
 import chat_pb2
 import chat_pb2_grpc
 from auth import create_token, decode_token, get_current_user, revoke_user_tokens, get_current_admin, get_user_role, set_user_role, USER_ROLES_STORE, DEFAULT_ADMIN_EMAILS
-from ai_service import generate_ai_reply, summarize_conversation, rewrite_message_text
+from ai_service import generate_ai_reply, summarize_conversation, rewrite_message_text, translate_message_text
 from security_ai import sanitize_pii
 from vector_db import vector_db
 from email_service import generate_and_save_otp, verify_otp_code, send_smtp_email, build_otp_html
@@ -943,6 +943,54 @@ class PinMessageBody(BaseModel):
     message_id: str = Field(min_length=1, max_length=100)
 
 
+class EditMessageBody(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+
+class CreatePollBody(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    options: List[str]
+    is_multiple_choice: bool = False
+    is_anonymous: bool = False
+
+
+class VotePollBody(BaseModel):
+    option_id: str = Field(min_length=1, max_length=50)
+
+
+def format_poll_response(poll: dict) -> dict:
+    options = poll.get("options", [])
+    total_votes = sum(len(opt.get("voter_ids", [])) for opt in options)
+    unique_voters = set()
+    for opt in options:
+        unique_voters.update(opt.get("voter_ids", []))
+
+    return {
+        "id": poll["_id"],
+        "room_id": poll.get("room_id", ""),
+        "message_id": poll.get("message_id", ""),
+        "creator_id": poll.get("creator_id", ""),
+        "creator_name": poll.get("creator_name", "Thành viên"),
+        "question": poll.get("question", ""),
+        "options": [
+            {
+                "id": opt["id"],
+                "text": opt["text"],
+                "voter_ids": opt.get("voter_ids", []),
+                "vote_count": len(opt.get("voter_ids", [])),
+                "percentage": round((len(opt.get("voter_ids", [])) / total_votes * 100), 1) if total_votes > 0 else 0.0,
+            }
+            for opt in options
+        ],
+        "is_multiple_choice": bool(poll.get("is_multiple_choice", False)),
+        "is_anonymous": bool(poll.get("is_anonymous", False)),
+        "is_closed": bool(poll.get("is_closed", False)),
+        "created_at": poll.get("created_at", 0),
+        "total_votes": total_votes,
+        "total_voters": len(unique_voters),
+    }
+
+
 @app.post("/api/v1/rooms/{room_id}/messages/{message_id}/revoke")
 async def revoke_message(
     room_id: str,
@@ -1054,6 +1102,230 @@ async def react_message(
     }))
 
     return {"ok": True, "message_id": message_id, "reactions": reactions}
+
+
+@app.put("/api/v1/rooms/{room_id}/messages/{message_id}")
+async def edit_message(
+    room_id: str,
+    message_id: str,
+    body: EditMessageBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Chỉnh sửa tin nhắn đã gửi trong vòng 30 phút."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    msg = mongo_db["messages"].find_one({"_id": message_id, "room_id": room_id})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn cần chỉnh sửa.")
+
+    if msg.get("sender_id") != user_id:
+        raise HTTPException(status_code=403, detail="Bạn chỉ có thể chỉnh sửa tin nhắn do chính mình gửi.")
+
+    if msg.get("is_revoked"):
+        raise HTTPException(status_code=400, detail="Không thể chỉnh sửa tin nhắn đã thu hồi.")
+
+    if msg.get("type") and msg.get("type") not in ("TEXT", "text"):
+        raise HTTPException(status_code=400, detail="Chỉ có thể chỉnh sửa tin nhắn văn bản.")
+
+    msg_time = msg.get("timestamp", 0)
+    now_ms = int(time.time() * 1000)
+    if (now_ms - msg_time) > 30 * 60 * 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Đã quá 30 phút kể từ lúc gửi. Không thể chỉnh sửa tin nhắn này nữa."
+        )
+
+    new_content = body.content.strip()
+    if not new_content:
+        raise HTTPException(status_code=400, detail="Nội dung tin nhắn không được để trống.")
+
+    mongo_db["messages"].update_one(
+        {"_id": message_id},
+        {"$set": {"content": new_content, "is_edited": True, "edited_at": now_ms}}
+    )
+
+    room = mongo_db["rooms"].find_one({"_id": room_id})
+    if room and room.get("last_message_timestamp") == msg_time:
+        mongo_db["rooms"].update_one(
+            {"_id": room_id},
+            {"$set": {"last_message_content": new_content}}
+        )
+
+    asyncio.create_task(broadcast_ws_event({
+        "type": "MESSAGE_EDITED",
+        "room_id": room_id,
+        "message_id": message_id,
+        "content": new_content,
+        "is_edited": True,
+        "edited_at": now_ms,
+    }))
+
+    return {
+        "ok": True,
+        "message_id": message_id,
+        "content": new_content,
+        "is_edited": True,
+        "edited_at": now_ms,
+    }
+
+
+@app.post("/api/v1/rooms/{room_id}/polls")
+async def create_poll(
+    room_id: str,
+    body: CreatePollBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Tạo cuộc bình chọn mới trong phòng chat."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    cleaned_options = [opt.strip() for opt in body.options if opt and opt.strip()]
+    if len(cleaned_options) < 2:
+        raise HTTPException(status_code=400, detail="Cuộc bình chọn cần ít nhất 2 lựa chọn.")
+    if len(cleaned_options) > 10:
+        raise HTTPException(status_code=400, detail="Tối đa 10 lựa chọn cho một cuộc bình chọn.")
+
+    sender = mongo_db["users"].find_one({"_id": user_id})
+    sender_name = sender.get("display_name", "Thành viên") if sender else "Thành viên"
+
+    now_ms = int(time.time() * 1000)
+    poll_id = f"poll_{uuid.uuid4().hex[:12]}"
+    msg_id = f"msg_{uuid.uuid4().hex[:16]}"
+    poll_content = f"📊 [Bình chọn] {body.question.strip()}"
+
+    # Gửi qua gRPC backend để ghi nhận vào lịch sử phòng chat
+    grpc_request = chat_pb2.ChatMessage(
+        message_id=msg_id,
+        room_id=room_id,
+        sender_id=user_id,
+        content=poll_content,
+        timestamp=now_ms,
+        type=chat_pb2.ChatMessage.TEXT,
+    )
+    try:
+        await request.app.state.stub.SendMessage(grpc_request, timeout=GRPC_TIMEOUT)
+    except grpc.RpcError as e:
+        log.warning("gRPC SendMessage for poll warning: %s", e)
+
+    poll_options = [
+        {"id": f"opt_{i}", "text": opt, "voter_ids": []}
+        for i, opt in enumerate(cleaned_options)
+    ]
+    poll_doc = {
+        "_id": poll_id,
+        "room_id": room_id,
+        "message_id": msg_id,
+        "creator_id": user_id,
+        "creator_name": sender_name,
+        "question": body.question.strip(),
+        "options": poll_options,
+        "is_multiple_choice": body.is_multiple_choice,
+        "is_anonymous": body.is_anonymous,
+        "is_closed": False,
+        "created_at": now_ms,
+    }
+    mongo_db["polls"].insert_one(poll_doc)
+
+    mongo_db["messages"].update_one(
+        {"_id": msg_id},
+        {"$set": {
+            "room_id": room_id,
+            "sender_id": user_id,
+            "content": poll_content,
+            "type": "POLL",
+            "poll_id": poll_id,
+            "timestamp": now_ms,
+        }},
+        upsert=True,
+    )
+
+    formatted = format_poll_response(poll_doc)
+
+    asyncio.create_task(broadcast_ws_event({
+        "type": "POLL_CREATED",
+        "room_id": room_id,
+        "poll_id": poll_id,
+        "message_id": msg_id,
+        "poll": formatted,
+    }))
+
+    return {"ok": True, "poll_id": poll_id, "message_id": msg_id, "poll": formatted}
+
+
+@app.post("/api/v1/chat/polls/{poll_id}/vote")
+async def vote_poll(
+    poll_id: str,
+    body: VotePollBody,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Bình chọn hoặc thay đổi bình chọn trong Poll."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    poll = mongo_db["polls"].find_one({"_id": poll_id})
+    if not poll:
+        raise HTTPException(status_code=404, detail="Không tìm thấy cuộc bình chọn.")
+
+    if poll.get("is_closed"):
+        raise HTTPException(status_code=400, detail="Cuộc bình chọn này đã kết thúc.")
+
+    target_opt_id = body.option_id.strip()
+    options = poll.get("options", [])
+    valid_opt_ids = {opt["id"] for opt in options}
+    if target_opt_id not in valid_opt_ids:
+        raise HTTPException(status_code=400, detail="Lựa chọn không hợp lệ.")
+
+    is_multiple = poll.get("is_multiple_choice", False)
+
+    for opt in options:
+        voters = opt.get("voter_ids", [])
+        if opt["id"] == target_opt_id:
+            if user_id in voters:
+                voters.remove(user_id)
+            else:
+                voters.append(user_id)
+        else:
+            if not is_multiple and user_id in voters:
+                voters.remove(user_id)
+        opt["voter_ids"] = voters
+
+    mongo_db["polls"].update_one(
+        {"_id": poll_id},
+        {"$set": {"options": options}}
+    )
+
+    poll["options"] = options
+    formatted = format_poll_response(poll)
+
+    asyncio.create_task(broadcast_ws_event({
+        "type": "POLL_UPDATED",
+        "room_id": poll.get("room_id"),
+        "poll_id": poll_id,
+        "poll": formatted,
+    }))
+
+    return {"ok": True, "poll": formatted}
+
+
+@app.get("/api/v1/chat/polls/{poll_id}")
+async def get_poll(
+    poll_id: str,
+    request: Request,
+    user_id: str = Depends(get_current_user),
+):
+    """Lấy chi tiết và kết quả cuộc bình chọn."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+
+    poll = mongo_db["polls"].find_one({"_id": poll_id})
+    if not poll:
+        raise HTTPException(status_code=404, detail="Không tìm thấy cuộc bình chọn.")
+
+    return {"ok": True, "poll": format_poll_response(poll)}
 
 
 @app.post("/api/v1/rooms/{room_id}/pin")
@@ -1471,11 +1743,14 @@ async def get_history(
         try:
             docs = mongo_db["messages"].find(
                 {"_id": {"$in": msg_ids}},
-                {"is_revoked": 1, "reactions": 1, "reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1, "is_forwarded": 1}
+                {"content": 1, "is_revoked": 1, "is_edited": 1, "edited_at": 1, "reactions": 1, "reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1, "is_forwarded": 1, "poll_id": 1}
             )
             for d in docs:
                 extra_map[d["_id"]] = {
+                    "content": d.get("content"),
                     "is_revoked": bool(d.get("is_revoked", False)),
+                    "is_edited": bool(d.get("is_edited", False)),
+                    "edited_at": d.get("edited_at"),
                     "reactions": d.get("reactions") or {},
                     "reply_to": d.get("reply_to"),
                     "type": d.get("type"),
@@ -1483,6 +1758,7 @@ async def get_history(
                     "file_size": d.get("file_size"),
                     "media_url": d.get("media_url"),
                     "is_forwarded": bool(d.get("is_forwarded", False)),
+                    "poll_id": d.get("poll_id"),
                 }
             starred_docs = mongo_db["starred_messages"].find(
                 {"user_id": user_id, "message_id": {"$in": msg_ids}},
@@ -1498,7 +1774,7 @@ async def get_history(
                 "message_id": m.message_id,
                 "room_id": m.room_id,
                 "sender_id": m.sender_id,
-                "content": "Tin nhắn đã được thu hồi" if extra_map.get(m.message_id, {}).get("is_revoked") else m.content,
+                "content": "Tin nhắn đã được thu hồi" if extra_map.get(m.message_id, {}).get("is_revoked") else (extra_map.get(m.message_id, {}).get("content") or m.content),
                 "timestamp": m.timestamp,
                 "type": extra_map.get(m.message_id, {}).get("type") or MESSAGE_TYPE_TO_API.get(m.type, "TEXT"),
                 "media_url": extra_map.get(m.message_id, {}).get("media_url") or m.media_url,
@@ -1506,12 +1782,15 @@ async def get_history(
                 "media_height": m.media_height,
                 "media_duration_ms": m.media_duration_ms,
                 "is_revoked": extra_map.get(m.message_id, {}).get("is_revoked", False),
+                "is_edited": extra_map.get(m.message_id, {}).get("is_edited", False),
+                "edited_at": extra_map.get(m.message_id, {}).get("edited_at"),
                 "reactions": extra_map.get(m.message_id, {}).get("reactions", {}),
                 "reply_to": extra_map.get(m.message_id, {}).get("reply_to"),
                 "file_name": extra_map.get(m.message_id, {}).get("file_name"),
                 "file_size": extra_map.get(m.message_id, {}).get("file_size"),
                 "is_forwarded": extra_map.get(m.message_id, {}).get("is_forwarded", False),
                 "is_starred": m.message_id in starred_set,
+                "poll_id": extra_map.get(m.message_id, {}).get("poll_id"),
             }
             for m in resp.messages
         ],
@@ -1907,9 +2186,11 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                         try:
                             extra_doc = mongo_db["messages"].find_one(
                                 {"_id": event.message.message_id},
-                                {"reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1, "is_forwarded": 1}
+                                {"content": 1, "reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1, "is_forwarded": 1, "is_edited": 1, "edited_at": 1, "poll_id": 1}
                             )
                             if extra_doc:
+                                if extra_doc.get("content"):
+                                    msg_obj["content"] = extra_doc["content"]
                                 if extra_doc.get("reply_to"):
                                     msg_obj["reply_to"] = extra_doc["reply_to"]
                                 if extra_doc.get("type"):
@@ -1921,6 +2202,11 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                                     msg_obj["media_url"] = extra_doc["media_url"]
                                 if extra_doc.get("is_forwarded"):
                                     msg_obj["is_forwarded"] = True
+                                if extra_doc.get("is_edited"):
+                                    msg_obj["is_edited"] = True
+                                    msg_obj["edited_at"] = extra_doc.get("edited_at")
+                                if extra_doc.get("poll_id"):
+                                    msg_obj["poll_id"] = extra_doc["poll_id"]
                         except Exception:
                             pass
                     payload["message"] = msg_obj
@@ -2185,7 +2471,12 @@ class AiSummarizeBody(BaseModel):
 
 class AiRewriteBody(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
-    tone: Literal["formal", "friendly", "short", "english"] = "formal" 
+    tone: Literal["formal", "friendly", "short", "english"] = "formal"
+
+
+class AiTranslateBody(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    target_lang: str = Field(default="vi", max_length=10) 
 
 @app.post("/api/v1/ai/chat")
 async def ai_chat(
@@ -2289,6 +2580,21 @@ async def ai_chat(
         "ok": True,
         "reply": reply,
         "model": "HQ AI",
+    }
+
+
+@app.post("/api/v1/ai/translate")
+async def ai_translate_text(
+    payload: AiTranslateBody,
+    user_id: str = Depends(get_current_user),
+):
+    """Dịch tức thì tin nhắn trong phòng chat bằng AI (Gemini)"""
+    res = translate_message_text(payload.text, target_lang=payload.target_lang)
+    return {
+        "ok": True,
+        "original_text": res.get("original_text", payload.text),
+        "translated_text": res.get("translated_text", ""),
+        "target_lang": res.get("target_lang", payload.target_lang),
     }
 
 

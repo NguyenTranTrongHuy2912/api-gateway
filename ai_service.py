@@ -468,3 +468,42 @@ def rewrite_message_text(text: str, tone: str = "formal") -> str:
     elif tone == "english":
         return f"Hi, I would like to let you know: {clean_text}. Thank you!"
     return clean_text
+
+
+# ====================================================================== Dịch tin nhắn đa ngữ (Instant Translation)
+
+def translate_message_text(text: str, target_lang: str = "vi") -> dict:
+    """
+    Dịch tin nhắn tức thì sang ngôn ngữ đích (mặc định: tiếng Việt hoặc tiếng Anh).
+    Bảo vệ PII và dịch tự nhiên, chuẩn văn phong giao tiếp.
+    """
+    clean_text = sanitize_pii(text).strip()
+    if not clean_text:
+        return {
+            "original_text": text,
+            "translated_text": "",
+            "target_lang": target_lang,
+        }
+
+    target_desc = "tiếng Việt tự nhiên, chuẩn ngữ cảnh trò chuyện" if target_lang.lower().startswith("vi") else "tiếng Anh tự nhiên, chuẩn xác"
+    prompt = (
+        f"Bạn là chuyên gia dịch thuật thông minh.\n"
+        f"Hãy dịch chính xác đoạn văn bản sau sang {target_desc}.\n"
+        f"NGUYÊN TẮC: Chỉ trả về duy nhất nội dung sau khi dịch, tuyệt đối không thêm lời giải thích hay ngoặc kép thừa.\n\n"
+        f"\"{clean_text}\""
+    )
+
+    gemini_res = call_gemini_api(prompt)
+    if gemini_res:
+        return {
+            "original_text": clean_text,
+            "translated_text": gemini_res.strip().strip('"'),
+            "target_lang": target_lang,
+        }
+
+    # Fallback ngoại tuyến
+    return {
+        "original_text": clean_text,
+        "translated_text": f"[Bản dịch] {clean_text}",
+        "target_lang": target_lang,
+    }
