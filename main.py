@@ -8,7 +8,7 @@ import time
 import unicodedata
 import uuid
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
 from dotenv import load_dotenv
 
@@ -949,7 +949,7 @@ class EditMessageBody(BaseModel):
 
 class CreatePollBody(BaseModel):
     question: str = Field(min_length=1, max_length=500)
-    options: List[str]
+    options: list[str]
     is_multiple_choice: bool = False
     is_anonymous: bool = False
 
