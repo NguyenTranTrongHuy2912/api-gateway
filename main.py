@@ -2011,13 +2011,36 @@ async def broadcast_ws_event(payload: dict):
 
 
 async def send_expo_push(target_user_ids: list[str], title: str, body: str, data: dict = None):
-    """Gửi push notification qua Expo Push API"""
-    tokens = [
-        user_push_tokens[uid]
-        for uid in target_user_ids
-        if uid in user_push_tokens and user_push_tokens[uid].startswith("ExponentPushToken")
-    ]
-    if not tokens:
+    """Gửi push notification qua Expo Push API (đọc token từ RAM và fallback từ MongoDB)"""
+    if not target_user_ids:
+        return
+
+    token_set = set()
+    missing_uids = []
+
+    for uid in target_user_ids:
+        t = user_push_tokens.get(uid)
+        if t and t.startswith("ExponentPushToken"):
+            token_set.add(t)
+        else:
+            missing_uids.append(uid)
+
+    # Nếu RAM chưa có (do server vừa restart), lấy lại từ MongoDB
+    if missing_uids and mongo_db is not None:
+        try:
+            docs = mongo_db["users"].find(
+                {"_id": {"$in": missing_uids}, "push_token": {"$exists": True, "$ne": ""}},
+                {"_id": 1, "push_token": 1},
+            )
+            for d in docs:
+                t = d.get("push_token", "")
+                if t.startswith("ExponentPushToken"):
+                    user_push_tokens[d["_id"]] = t
+                    token_set.add(t)
+        except Exception as e:
+            log.warning("Could not load push tokens from Mongo: %s", e)
+
+    if not token_set:
         return
 
     messages = [
@@ -2030,7 +2053,7 @@ async def send_expo_push(target_user_ids: list[str], title: str, body: str, data
             "priority": "high",
             "channelId": "chat-messages",
         }
-        for token in tokens
+        for token in token_set
     ]
 
     try:
@@ -2057,11 +2080,23 @@ async def notify_new_message(room_id: str, sender_id: str, content: str, msg_typ
         room = next((r for r in rooms_resp.rooms if r.room_id == room_id), None)
         if not room:
             return
-        sender_member = next((m for m in room.members if m.user_id == sender_id), None)
-        sender_name = sender_member.display_name if sender_member and sender_member.display_name else "Tin nhắn mới"
 
-        title = room.name if (room.type == chat_pb2.ROOM_TYPE_GROUP and room.name) else sender_name
-        body_text = content
+        if sender_id == "hq_ai_bot":
+            sender_name = "HQ AI 🤖"
+        else:
+            sender_member = next((m for m in room.members if m.user_id == sender_id), None)
+            sender_name = (
+                sender_member.display_name
+                if sender_member and sender_member.display_name
+                else ""
+            )
+
+        if room.type == chat_pb2.ROOM_TYPE_GROUP and room.name:
+            title = f"{room.name} · {sender_name}" if sender_name else room.name
+        else:
+            title = sender_name or "Tin nhắn mới"
+
+        body_text = re.sub(r"^🤖\s*\[HQ AI\]:\s*", "", content or "")
         if msg_type == "IMAGE":
             body_text = "Đã gửi một hình ảnh 📷"
         elif msg_type == "VIDEO":
@@ -2069,7 +2104,7 @@ async def notify_new_message(room_id: str, sender_id: str, content: str, msg_typ
         elif msg_type == "FILE":
             body_text = "Đã gửi một tài liệu 📎"
 
-        target_ids = [uid for uid in room.member_ids if uid != sender_id]
+        target_ids = [uid for uid in room.member_ids if uid != sender_id and uid != "hq_ai_bot"]
         await send_expo_push(target_ids, title=title, body=body_text, data={"roomId": room_id, "type": "chat"})
     except Exception as e:
         log.warning("Error pushing new message notification: %s", e)
@@ -2095,6 +2130,14 @@ async def register_push_token(
     user_id: str = Depends(get_current_user),
 ):
     user_push_tokens[user_id] = payload.push_token
+    if mongo_db is not None:
+        try:
+            mongo_db["users"].update_one(
+                {"_id": user_id},
+                {"$set": {"push_token": payload.push_token}},
+            )
+        except Exception as e:
+            log.warning("Could not save push token to Mongo: %s", e)
     log.info("Registered push token for user %s: %s", user_id, payload.push_token)
     return {"ok": True}
 
