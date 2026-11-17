@@ -1821,34 +1821,48 @@ async def send_ws_to_user(target_user_id: str, payload: dict) -> bool:
 
 
 async def record_call_history_message(room_id: str, sender_id: str, content: str, stub):
-    """Ghi lại lịch sử cuộc gọi vào MongoDB và phát WebSocket tới cả phòng"""
+    """Ghi lại lịch sử cuộc gọi qua Java gRPC để đồng bộ cả lịch sử phòng chat và WebSocket"""
     now_ms = int(time.time() * 1000)
     call_msg_id = str(uuid.uuid4())
-    if mongo_db is not None:
-        try:
-            mongo_db["messages"].insert_one({
-                "_id": call_msg_id,
-                "room_id": room_id,
-                "sender_id": sender_id,
-                "content": content,
-                "timestamp": now_ms,
-                "type": "TEXT",
-            })
-            mongo_db["rooms"].update_one(
-                {"_id": room_id},
-                {"$set": {
-                    "last_message": {
-                        "content": content,
-                        "sender_id": sender_id,
-                        "timestamp": now_ms,
-                    },
-                    "last_message_at": now_ms,
-                }}
-            )
-        except Exception as e:
-            log.warning("Could not record call message to Mongo: %s", e)
 
-    # Phát sự kiện NEW_MESSAGE qua WebSocket
+    grpc_request = chat_pb2.ChatMessage(
+        message_id=call_msg_id,
+        room_id=room_id,
+        sender_id=sender_id,
+        content=content,
+        timestamp=now_ms,
+        type=chat_pb2.MESSAGE_TYPE_TEXT,
+    )
+
+    try:
+        await stub.SendMessage(grpc_request, timeout=GRPC_TIMEOUT)
+    except grpc.RpcError as e:
+        log.warning("Could not record call message via gRPC, falling back to Mongo: %s", e)
+        if mongo_db is not None:
+            try:
+                mongo_db["messages"].insert_one({
+                    "_id": call_msg_id,
+                    "room_id": room_id,
+                    "sender_id": sender_id,
+                    "content": content,
+                    "timestamp": now_ms,
+                    "type": "TEXT",
+                })
+                mongo_db["rooms"].update_one(
+                    {"_id": room_id},
+                    {"$set": {
+                        "last_message": {
+                            "content": content,
+                            "sender_id": sender_id,
+                            "timestamp": now_ms,
+                        },
+                        "last_message_at": now_ms,
+                    }}
+                )
+            except Exception as ex:
+                log.warning("Fallback Mongo insert for call message failed: %s", ex)
+
+    # Gửi thông báo đẩy (Push Notification)
     await notify_new_message(room_id, sender_id, content, "TEXT", stub)
 
 
