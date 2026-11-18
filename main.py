@@ -1408,7 +1408,7 @@ async def sign_upload(
     if not (CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET):
         raise HTTPException(status_code=503, detail="Upload is not configured")
 
-    if resource_type in ("video",):
+    if resource_type in ("video", "audio"):
         res_type = "video"
         transformation = ""
     elif resource_type in ("raw", "document", "file"):
