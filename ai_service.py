@@ -31,13 +31,13 @@ load_dotenv(override=True)
 log = logging.getLogger("gateway.ai")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
 CANDIDATE_MODELS = [
     GEMINI_MODEL,
-    "gemini-1.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-pro",
+    "gemini-2.5-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3-flash-preview",
 ]
 
 HQ_AI_SYSTEM_INSTRUCTION = (
