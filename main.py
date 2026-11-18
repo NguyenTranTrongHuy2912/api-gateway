@@ -1203,7 +1203,7 @@ async def create_poll(
         sender_id=user_id,
         content=poll_content,
         timestamp=now_ms,
-        type=chat_pb2.ChatMessage.TEXT,
+        type=chat_pb2.MESSAGE_TYPE_TEXT,
     )
     try:
         await request.app.state.stub.SendMessage(grpc_request, timeout=GRPC_TIMEOUT)
