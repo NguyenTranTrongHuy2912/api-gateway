@@ -41,13 +41,13 @@ CANDIDATE_MODELS = [
 ]
 
 HQ_AI_SYSTEM_INSTRUCTION = (
-    "Bạn là HQ AI 🤖✨ — Trợ lý trí tuệ nhân tạo thông minh, đa năng, thân thiện và chuyên nghiệp được tích hợp trong ứng dụng ChatApp.\n"
-    "Bạn có kiến thức sâu rộng về mọi lĩnh vực: Khoa học, Lịch sử, Đời sống, Toán học, Lập trình và Công nghệ.\n\n"
+    "Bạn là HQ AI 🤖✨ — Trợ lý trí tuệ nhân tạo thông minh, thân thiện, đa năng và gần gũi trong ứng dụng ChatApp.\n"
+    "Bạn luôn sẵn sàng hỗ trợ giải đáp mọi thắc mắc trong đời sống, học tập, công việc, tính toán và giải trí.\n\n"
     "NGUYÊN TẮC TRẢ LỜI CỐT LÕI:\n"
-    "1. Luôn trả lời bằng tiếng Việt tự nhiên, chính xác, súc tích và giải thích dễ hiểu, đi thẳng vào câu hỏi của người dùng.\n"
-    "2. TUYỆT ĐỐI KHÔNG TỰ Ý nhắc đến kiến trúc ChatApp hay kỹ thuật lập trình trừ khi người dùng ĐẶC BIỆT hỏi về kiến trúc ChatApp hoặc hệ thống này.\n"
+    "1. Luôn trả lời bằng tiếng Việt tự nhiên, ấm áp, chính xác, súc tích và dễ hiểu, đi thẳng vào câu hỏi của người dùng.\n"
+    "2. TUYỆT ĐỐI BẢO MẬT: Không tự ý tiết lộ chi tiết kỹ thuật nội bộ, hạ tầng máy chủ, mã nguồn hay cấu trúc hệ thống của ứng dụng.\n"
     "3. Định dạng bằng Markdown đẹp mắt: dùng gạch đầu dòng (•), in đậm từ khóa quan trọng (**từ khóa**), dùng khối mã (```language) khi viết code.\n"
-    "4. Khi người dùng hỏi về dự án ChatApp: Giới thiệu hệ thống 3 tầng Microservices: Mobile Frontend (React Native + Expo SDK 58), API Gateway (FastAPI Python), Core Backend (Java 21 Netty gRPC).\n"
+    "4. Khi người dùng hỏi về ChatApp: Giới thiệu ChatApp là nền tảng trò chuyện và gọi thoại/video bảo mật cao, kết nối thời gian thực mượt mà với nhiều tính năng tương tác phong phú và tiện ích AI thông minh.\n"
     "5. Nếu người dùng yêu cầu tóm tắt phòng chat: Nêu đúng 3 phần rõ ràng: 📌 Chủ đề trao đổi, 🤝 Đã thống nhất, ⏰ Lịch hẹn & Việc cần làm."
 )
 
@@ -248,27 +248,19 @@ def _smart_fallback_reply(prompt: str) -> str:
             "Hà Nội là trung tâm đầu não chính trị, hành chính quốc gia, đồng thời là trung tâm lớn về văn hóa, khoa học, giáo dục, kinh tế và giao dịch quốc tế của cả nước."
         )
 
-    # 4. Kiến trúc và công nghệ ChatApp (Chỉ trả lời khi người dùng hỏi cụ thể về ChatApp hoặc đồ án)
-    is_asking_app_arch = (
-        ("kien truc" in p_norm or "3 tang" in p_norm or "he thong" in p_norm or "cong nghe" in p_norm)
-        and ("chatapp" in p_norm or "do an" in p_norm or "ung dung" in p_norm or "app" in p_norm or "du an" in p_norm)
-    ) or ("fastapi" in p_norm and "grpc" in p_norm) or ("microservices" in p_norm and "chatapp" in p_norm)
+    # 4. Giới thiệu về ứng dụng ChatApp (Thân thiện, không lộ hạ tầng kỹ thuật máy chủ)
+    is_asking_app = (
+        ("ung dung" in p_norm or "app" in p_norm or "chatapp" in p_norm or "tinh nang" in p_norm)
+        and ("la gi" in p_norm or "co gi" in p_norm or "gioi thieu" in p_norm or "chuc nang" in p_norm or "lam duoc gi" in p_norm or "nhu the nao" in p_norm)
+    )
 
-    if is_asking_app_arch:
+    if is_asking_app:
         return (
-            "Ứng dụng **ChatApp** được xây dựng theo kiến trúc **Microservices 3 tầng độc lập chuẩn Clean Architecture**:\n\n"
-            "1. 📱 **Mobile Frontend (React Native + Expo SDK 58)**:\n"
-            "   • Điều hướng chuẩn file-based với **Expo Router**, bảo vệ tuyến đường bằng `Stack.Protected`.\n"
-            "   • Quản lý trạng thái và bộ đệm bằng **Redux Toolkit + RTK Query** với Optimistic Update (gửi ngay lập tức).\n"
-            "   • Giao diện hiện đại với **Tamagui UI Kit**, hỗ trợ Dark/Light Theme và hiệu ứng nhún lò xo `ScalePressable`.\n"
-            "   • Tích hợp tính năng gọi điện thoại thoại (Audio) & Video Call với chuông rung Native `Vibration`.\n\n"
-            "2. 🚀 **API Gateway (FastAPI - Python 3.13)**:\n"
-            "   • Đóng vai trò Backend-For-Frontend (BFF), xác thực token bảo mật JWT.\n"
-            "   • Kênh kết nối **WebSocket thời gian thực** quản lý trạng thái Online, tin nhắn mới và tín hiệu cuộc gọi (WebRTC Signaling).\n"
-            "   • Tích hợp Vector Database in-memory (Cosine Similarity K-NN) và bộ não **HQ AI**.\n\n"
-            "3. ⚙️ **Core Backend (Java 21 Netty gRPC)**:\n"
-            "   • Xử lý nghiệp vụ chat và danh bạ với giao thức nhị phân Protobuf tốc độ cao.\n"
-            "   • Lưu trữ cơ sở dữ liệu trên **MongoDB Atlas Cloud** (Replica Set) và gửi mã OTP qua Jakarta Mail SMTP."
+            "Chào bạn! **ChatApp** là nền tảng trò chuyện và liên lạc thông minh hiện đại, bảo mật cao:\n\n"
+            "• 💬 **Nhắn tin thời gian thực:** Trò chuyện 1-1 và theo nhóm với tốc độ phản hồi tức thì, hỗ trợ gửi ảnh, video, tài liệu và tin nhắn thoại.\n"
+            "• 📞 **Cuộc gọi thoại & video HD:** Kết nối đàm thoại 2 chiều với chất lượng âm thanh và hình ảnh sắc nét.\n"
+            "• 🤖 **Trợ lý thông minh AI:** Tích hợp bộ công cụ hỗ trợ hỏi đáp, dịch thuật tức thì, viết lại văn phong và tóm tắt thảo luận nhóm.\n"
+            "• 🔒 **Bảo mật và riêng tư:** Dữ liệu người dùng được mã hóa và bảo vệ an toàn với phân quyền tài khoản chặt chẽ."
         )
 
     # 5. Chào hỏi & giới thiệu (Chỉ so khớp khi là từ chào hỏi độc lập với word boundary \b)
