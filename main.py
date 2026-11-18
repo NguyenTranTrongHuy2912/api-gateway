@@ -538,19 +538,23 @@ async def update_user_role_admin(
     body: SetUserRoleBody,
     admin_id: str = Depends(get_current_admin),
 ):
-    if target_user_id == admin_id and body.role != "ADMIN":
-        raise HTTPException(status_code=400, detail="Không thể tự hạ quyền Admin của chính mình.")
+    # Bảo mật: Không cho phép hạ cấp Quản trị viên xuống USER
+    if body.role != "ADMIN":
+        raise HTTPException(
+            status_code=400,
+            detail="Vì lý do an toàn và bảo mật hệ thống, tài khoản Quản trị viên (ADMIN) không thể bị hạ cấp xuống USER."
+        )
 
-    set_user_role(target_user_id, body.role)
+    set_user_role(target_user_id, "ADMIN")
     if mongo_db is not None:
         mongo_db["users"].update_one(
             {"_id": target_user_id},
-            {"$set": {"role": body.role}}
+            {"$set": {"role": "ADMIN"}}
         )
     return {
         "ok": True,
         "user_id": target_user_id,
-        "new_role": body.role,
+        "new_role": "ADMIN",
         "updated_by": admin_id,
     }
 
