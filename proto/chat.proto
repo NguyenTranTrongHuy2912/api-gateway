@@ -28,6 +28,16 @@ service ChatService {
   rpc RespondFriendRequest (RespondFriendRequestReq) returns (RespondFriendRequestResp);
   rpc ListFriends (ListFriendsReq) returns (ListFriendsResp);
   rpc ListFriendRequests (ListFriendRequestsReq) returns (ListFriendRequestsResp);
+
+  // --- Hành động trên tin nhắn (Java là nơi duy nhất ghi dữ liệu) ---
+  rpc RevokeMessage (RevokeMessageRequest) returns (RevokeMessageResponse);
+  rpc EditMessage (EditMessageRequest) returns (EditMessageResponse);
+  rpc ReactMessage (ReactMessageRequest) returns (ReactMessageResponse);
+  rpc CreatePoll (CreatePollRequest) returns (PollResponse);
+  rpc VotePoll (VotePollRequest) returns (PollResponse);
+  rpc PinMessage (PinMessageRequest) returns (PinMessageResponse);
+  rpc UnpinMessage (UnpinMessageRequest) returns (UnpinMessageResponse);
+  rpc ToggleStarMessage (ToggleStarMessageRequest) returns (ToggleStarMessageResponse);
 }
 
 enum MessageType {
@@ -175,6 +185,12 @@ enum EventType {
   EVENT_READ_RECEIPT = 3;
   EVENT_FRIEND_REQUEST = 4;
   EVENT_FRIEND_ACCEPTED = 5;
+  EVENT_MESSAGE_REVOKED = 6;
+  EVENT_MESSAGE_EDITED = 7;
+  EVENT_MESSAGE_REACTION = 8;
+  EVENT_POLL_CREATED = 9;
+  EVENT_POLL_UPDATED = 10;
+  EVENT_ROOM_PINNED = 11;
 }
 
 message StreamEventsRequest {
@@ -188,6 +204,9 @@ message ChatEvent {
   string user_id = 4;
   int64 timestamp = 5;
   FriendRequestItem friend_request = 6;
+  MessageUpdate message_update = 7;   // REVOKED / EDITED / REACTION
+  Poll poll = 8;                      // POLL_CREATED / POLL_UPDATED
+  PinUpdate pin_update = 9;           // ROOM_PINNED
 }
 
 // ---------------------------------------------------------------- Hệ thống kết bạn
@@ -244,6 +263,146 @@ message ListFriendRequestsReq {
 
 message ListFriendRequestsResp {
   repeated FriendRequestItem requests = 1;
+}
+
+// ---------------------------------------------------------------- Hành động trên tin nhắn
+
+message ReactionEntry {
+  string emoji = 1;
+  repeated string user_ids = 2;
+}
+
+// Payload chung cho event REVOKED / EDITED / REACTION.
+message MessageUpdate {
+  string room_id = 1;
+  string message_id = 2;
+  string sender_id = 3;              // REVOKED: người gửi tin
+  string content = 4;                // REVOKED / EDITED: nội dung mới
+  bool is_edited = 5;
+  int64 edited_at = 6;
+  int64 timestamp = 7;               // REVOKED: thời điểm thu hồi
+  repeated ReactionEntry reactions = 8;  // REACTION: trạng thái đầy đủ sau khi đổi
+  string user_id = 9;                // REACTION: người vừa thả/gỡ
+  string emoji = 10;                 // REACTION: emoji vừa thao tác
+}
+
+message RevokeMessageRequest {
+  string user_id = 1;                // lấy từ token ở gateway
+  string room_id = 2;
+  string message_id = 3;
+}
+
+message RevokeMessageResponse {
+  string message_id = 1;
+  string content = 2;
+  bool already_revoked = 3;
+}
+
+message EditMessageRequest {
+  string user_id = 1;
+  string room_id = 2;
+  string message_id = 3;
+  string content = 4;
+}
+
+message EditMessageResponse {
+  string message_id = 1;
+  string content = 2;
+  int64 edited_at = 3;
+}
+
+message ReactMessageRequest {
+  string user_id = 1;
+  string room_id = 2;
+  string message_id = 3;
+  string emoji = 4;                  // gửi lại cùng emoji = gỡ cảm xúc
+}
+
+message ReactMessageResponse {
+  string message_id = 1;
+  repeated ReactionEntry reactions = 2;
+}
+
+message PollOption {
+  string option_id = 1;
+  string text = 2;
+  repeated string voter_ids = 3;
+}
+
+message Poll {
+  string poll_id = 1;
+  string room_id = 2;
+  string message_id = 3;
+  string creator_id = 4;
+  string creator_name = 5;
+  string question = 6;
+  repeated PollOption options = 7;
+  bool is_multiple_choice = 8;
+  bool is_anonymous = 9;
+  bool is_closed = 10;
+  int64 created_at = 11;
+}
+
+message CreatePollRequest {
+  string user_id = 1;
+  string room_id = 2;
+  string question = 3;
+  repeated string options = 4;
+  bool is_multiple_choice = 5;
+  bool is_anonymous = 6;
+}
+
+message VotePollRequest {
+  string user_id = 1;
+  string poll_id = 2;
+  string option_id = 3;              // bấm lại lựa chọn đã chọn = bỏ phiếu
+}
+
+message PollResponse {
+  Poll poll = 1;
+}
+
+message PinnedMessage {
+  string message_id = 1;
+  string content = 2;
+  string sender_id = 3;
+  string sender_name = 4;
+  int64 timestamp = 5;
+  string pinned_by = 6;
+  int64 pinned_at = 7;
+}
+
+// pinned_message không set = phòng không còn tin ghim.
+message PinUpdate {
+  string room_id = 1;
+  PinnedMessage pinned_message = 2;
+}
+
+message PinMessageRequest {
+  string user_id = 1;
+  string room_id = 2;
+  string message_id = 3;
+}
+
+message PinMessageResponse {
+  PinnedMessage pinned_message = 1;
+}
+
+message UnpinMessageRequest {
+  string user_id = 1;
+  string room_id = 2;
+}
+
+message UnpinMessageResponse {}
+
+message ToggleStarMessageRequest {
+  string user_id = 1;
+  string message_id = 2;
+}
+
+message ToggleStarMessageResponse {
+  string message_id = 1;
+  bool starred = 2;
 }
 
 // ---------------------------------------------------------------------- Auth & Profile

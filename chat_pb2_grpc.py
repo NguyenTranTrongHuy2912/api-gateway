@@ -104,6 +104,46 @@ class ChatServiceStub:
                 request_serializer=chat__pb2.ListFriendRequestsReq.SerializeToString,
                 response_deserializer=chat__pb2.ListFriendRequestsResp.FromString,
                 _registered_method=True)
+        self.RevokeMessage = channel.unary_unary(
+                '/chat.ChatService/RevokeMessage',
+                request_serializer=chat__pb2.RevokeMessageRequest.SerializeToString,
+                response_deserializer=chat__pb2.RevokeMessageResponse.FromString,
+                _registered_method=True)
+        self.EditMessage = channel.unary_unary(
+                '/chat.ChatService/EditMessage',
+                request_serializer=chat__pb2.EditMessageRequest.SerializeToString,
+                response_deserializer=chat__pb2.EditMessageResponse.FromString,
+                _registered_method=True)
+        self.ReactMessage = channel.unary_unary(
+                '/chat.ChatService/ReactMessage',
+                request_serializer=chat__pb2.ReactMessageRequest.SerializeToString,
+                response_deserializer=chat__pb2.ReactMessageResponse.FromString,
+                _registered_method=True)
+        self.CreatePoll = channel.unary_unary(
+                '/chat.ChatService/CreatePoll',
+                request_serializer=chat__pb2.CreatePollRequest.SerializeToString,
+                response_deserializer=chat__pb2.PollResponse.FromString,
+                _registered_method=True)
+        self.VotePoll = channel.unary_unary(
+                '/chat.ChatService/VotePoll',
+                request_serializer=chat__pb2.VotePollRequest.SerializeToString,
+                response_deserializer=chat__pb2.PollResponse.FromString,
+                _registered_method=True)
+        self.PinMessage = channel.unary_unary(
+                '/chat.ChatService/PinMessage',
+                request_serializer=chat__pb2.PinMessageRequest.SerializeToString,
+                response_deserializer=chat__pb2.PinMessageResponse.FromString,
+                _registered_method=True)
+        self.UnpinMessage = channel.unary_unary(
+                '/chat.ChatService/UnpinMessage',
+                request_serializer=chat__pb2.UnpinMessageRequest.SerializeToString,
+                response_deserializer=chat__pb2.UnpinMessageResponse.FromString,
+                _registered_method=True)
+        self.ToggleStarMessage = channel.unary_unary(
+                '/chat.ChatService/ToggleStarMessage',
+                request_serializer=chat__pb2.ToggleStarMessageRequest.SerializeToString,
+                response_deserializer=chat__pb2.ToggleStarMessageResponse.FromString,
+                _registered_method=True)
 
 
 class ChatServiceServicer:
@@ -197,6 +237,55 @@ class ChatServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RevokeMessage(self, request, context):
+        """--- Hành động trên tin nhắn (Java là nơi duy nhất ghi dữ liệu) ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def EditMessage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ReactMessage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreatePoll(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def VotePoll(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def PinMessage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UnpinMessage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ToggleStarMessage(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ChatServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -269,6 +358,46 @@ def add_ChatServiceServicer_to_server(servicer, server):
                     servicer.ListFriendRequests,
                     request_deserializer=chat__pb2.ListFriendRequestsReq.FromString,
                     response_serializer=chat__pb2.ListFriendRequestsResp.SerializeToString,
+            ),
+            'RevokeMessage': grpc.unary_unary_rpc_method_handler(
+                    servicer.RevokeMessage,
+                    request_deserializer=chat__pb2.RevokeMessageRequest.FromString,
+                    response_serializer=chat__pb2.RevokeMessageResponse.SerializeToString,
+            ),
+            'EditMessage': grpc.unary_unary_rpc_method_handler(
+                    servicer.EditMessage,
+                    request_deserializer=chat__pb2.EditMessageRequest.FromString,
+                    response_serializer=chat__pb2.EditMessageResponse.SerializeToString,
+            ),
+            'ReactMessage': grpc.unary_unary_rpc_method_handler(
+                    servicer.ReactMessage,
+                    request_deserializer=chat__pb2.ReactMessageRequest.FromString,
+                    response_serializer=chat__pb2.ReactMessageResponse.SerializeToString,
+            ),
+            'CreatePoll': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreatePoll,
+                    request_deserializer=chat__pb2.CreatePollRequest.FromString,
+                    response_serializer=chat__pb2.PollResponse.SerializeToString,
+            ),
+            'VotePoll': grpc.unary_unary_rpc_method_handler(
+                    servicer.VotePoll,
+                    request_deserializer=chat__pb2.VotePollRequest.FromString,
+                    response_serializer=chat__pb2.PollResponse.SerializeToString,
+            ),
+            'PinMessage': grpc.unary_unary_rpc_method_handler(
+                    servicer.PinMessage,
+                    request_deserializer=chat__pb2.PinMessageRequest.FromString,
+                    response_serializer=chat__pb2.PinMessageResponse.SerializeToString,
+            ),
+            'UnpinMessage': grpc.unary_unary_rpc_method_handler(
+                    servicer.UnpinMessage,
+                    request_deserializer=chat__pb2.UnpinMessageRequest.FromString,
+                    response_serializer=chat__pb2.UnpinMessageResponse.SerializeToString,
+            ),
+            'ToggleStarMessage': grpc.unary_unary_rpc_method_handler(
+                    servicer.ToggleStarMessage,
+                    request_deserializer=chat__pb2.ToggleStarMessageRequest.FromString,
+                    response_serializer=chat__pb2.ToggleStarMessageResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -649,6 +778,222 @@ class ChatService:
             '/chat.ChatService/ListFriendRequests',
             chat__pb2.ListFriendRequestsReq.SerializeToString,
             chat__pb2.ListFriendRequestsResp.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RevokeMessage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/RevokeMessage',
+            chat__pb2.RevokeMessageRequest.SerializeToString,
+            chat__pb2.RevokeMessageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EditMessage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/EditMessage',
+            chat__pb2.EditMessageRequest.SerializeToString,
+            chat__pb2.EditMessageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ReactMessage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/ReactMessage',
+            chat__pb2.ReactMessageRequest.SerializeToString,
+            chat__pb2.ReactMessageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreatePoll(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/CreatePoll',
+            chat__pb2.CreatePollRequest.SerializeToString,
+            chat__pb2.PollResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def VotePoll(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/VotePoll',
+            chat__pb2.VotePollRequest.SerializeToString,
+            chat__pb2.PollResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PinMessage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/PinMessage',
+            chat__pb2.PinMessageRequest.SerializeToString,
+            chat__pb2.PinMessageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UnpinMessage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/UnpinMessage',
+            chat__pb2.UnpinMessageRequest.SerializeToString,
+            chat__pb2.UnpinMessageResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ToggleStarMessage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/ToggleStarMessage',
+            chat__pb2.ToggleStarMessageRequest.SerializeToString,
+            chat__pb2.ToggleStarMessageResponse.FromString,
             options,
             channel_credentials,
             insecure,
