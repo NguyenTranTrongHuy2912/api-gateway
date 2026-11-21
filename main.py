@@ -30,7 +30,6 @@ from auth import create_token, decode_token, get_current_user, revoke_user_token
 from ai_service import generate_ai_reply, summarize_conversation, rewrite_message_text, translate_message_text
 from security_ai import sanitize_pii
 from vector_db import vector_db
-from email_service import generate_and_save_otp, verify_otp_code, send_smtp_email, build_otp_html
 
 log = logging.getLogger("gateway")
 
@@ -84,6 +83,8 @@ HTTP_BY_GRPC = {
     grpc.StatusCode.PERMISSION_DENIED: 403,
     grpc.StatusCode.NOT_FOUND: 404,
     grpc.StatusCode.ALREADY_EXISTS: 409,
+    grpc.StatusCode.FAILED_PRECONDITION: 400,
+    grpc.StatusCode.ABORTED: 409,
     grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
     grpc.StatusCode.UNAVAILABLE: 503,
     grpc.StatusCode.DEADLINE_EXCEEDED: 504,
@@ -599,24 +600,33 @@ class AdminRequestOtpBody(BaseModel):
 @app.post("/api/v1/admin/request-otp")
 async def admin_request_otp(
     payload: AdminRequestOtpBody,
+    request: Request,
     admin_id: str = Depends(get_current_admin),
 ):
-    """Admin yêu cầu gửi mã xác thực OTP về chính email của người dùng mới sắp được tạo."""
+    """Admin yêu cầu gửi mã OTP về chính email của người dùng mới sắp được tạo.
+    Java sinh mã, lưu bản băm và gửi email; gateway không còn đụng tới OTP."""
     account_clean = payload.account.strip().lower()
     if not account_clean or "@" not in account_clean:
         raise HTTPException(status_code=400, detail="Email tài khoản không hợp lệ.")
 
-    if mongo_db is not None:
-        existing = mongo_db["users"].find_one({"account": account_clean})
-        if existing:
-            raise HTTPException(status_code=409, detail="Email này đã tồn tại trên hệ thống. Không thể tạo mới.")
+    try:
+        resp = await request.app.state.auth_stub.RequestOtp(
+            chat_pb2.RequestOtpRequest(
+                account=account_clean,
+                purpose=chat_pb2.OTP_PURPOSE_REGISTER,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        # Java trả ALREADY_EXISTS nếu email đã đăng ký
+        raise to_http_error(e, expose_details=True)
 
-    return generate_and_save_otp(
-        mongo_db,
-        account_clean,
-        purpose="register",
-        display_name=payload.display_name or account_clean.split("@")[0],
-    )
+    return {
+        "expires_in_seconds": resp.expires_in_seconds,
+        "resend_after_seconds": resp.resend_after_seconds,
+        "email": account_clean,
+        "message": f"Mã xác thực OTP đã được gửi đến {account_clean}. Vui lòng kiểm tra hộp thư đến hoặc mục thư rác (Spam).",
+    }
 
 
 class CreateUserAdminBody(BaseModel):
@@ -995,6 +1005,97 @@ def format_poll_response(poll: dict) -> dict:
     }
 
 
+def poll_proto_to_dict(p) -> dict:
+    """Poll (proto) -> dict cùng dạng document Mongo để dùng lại format_poll_response."""
+    return {
+        "_id": p.poll_id,
+        "room_id": p.room_id,
+        "message_id": p.message_id,
+        "creator_id": p.creator_id,
+        "creator_name": p.creator_name or "Thành viên",
+        "question": p.question,
+        "options": [
+            {"id": o.option_id, "text": o.text, "voter_ids": list(o.voter_ids)}
+            for o in p.options
+        ],
+        "is_multiple_choice": p.is_multiple_choice,
+        "is_anonymous": p.is_anonymous,
+        "is_closed": p.is_closed,
+        "created_at": p.created_at,
+    }
+
+
+def pinned_proto_to_dict(p) -> dict:
+    return {
+        "id": p.message_id,
+        "content": p.content,
+        "sender_id": p.sender_id,
+        "sender_name": p.sender_name or "Thành viên",
+        "timestamp": p.timestamp,
+        "pinned_by": p.pinned_by,
+        "pinned_at": p.pinned_at,
+    }
+
+
+def reactions_to_dict(entries) -> dict:
+    return {e.emoji: list(e.user_ids) for e in entries}
+
+
+def translate_action_event(event) -> Optional[dict]:
+    """Event hành động tin nhắn từ Java -> JSON WebSocket (giữ nguyên định dạng app đang dùng).
+    Trả None nếu không phải loại event này."""
+    et = event.event_type
+    if et == chat_pb2.EVENT_MESSAGE_REVOKED:
+        u = event.message_update
+        return {
+            "type": "MESSAGE_REVOKED",
+            "room_id": u.room_id,
+            "message_id": u.message_id,
+            "content": u.content,
+            "sender_id": u.sender_id,
+            "timestamp": u.timestamp,
+        }
+    if et == chat_pb2.EVENT_MESSAGE_EDITED:
+        u = event.message_update
+        return {
+            "type": "MESSAGE_EDITED",
+            "room_id": u.room_id,
+            "message_id": u.message_id,
+            "content": u.content,
+            "is_edited": True,
+            "edited_at": u.edited_at,
+        }
+    if et == chat_pb2.EVENT_MESSAGE_REACTION:
+        u = event.message_update
+        return {
+            "type": "MESSAGE_REACTION",
+            "room_id": u.room_id,
+            "message_id": u.message_id,
+            "reactions": reactions_to_dict(u.reactions),
+            "user_id": u.user_id,
+            "emoji": u.emoji,
+        }
+    if et in (chat_pb2.EVENT_POLL_CREATED, chat_pb2.EVENT_POLL_UPDATED):
+        p = event.poll
+        payload = {
+            "type": "POLL_CREATED" if et == chat_pb2.EVENT_POLL_CREATED else "POLL_UPDATED",
+            "room_id": p.room_id,
+            "poll_id": p.poll_id,
+            "poll": format_poll_response(poll_proto_to_dict(p)),
+        }
+        if et == chat_pb2.EVENT_POLL_CREATED:
+            payload["message_id"] = p.message_id
+        return payload
+    if et == chat_pb2.EVENT_ROOM_PINNED:
+        pu = event.pin_update
+        return {
+            "type": "ROOM_PINNED_MESSAGE",
+            "room_id": pu.room_id,
+            "pinned_message": pinned_proto_to_dict(pu.pinned_message) if pu.HasField("pinned_message") else None,
+        }
+    return None
+
+
 @app.post("/api/v1/rooms/{room_id}/messages/{message_id}/revoke")
 async def revoke_message(
     room_id: str,
@@ -1002,54 +1103,18 @@ async def revoke_message(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Thu hồi tin nhắn 2 phía trong vòng 30 phút sau khi gửi."""
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+    """Thu hồi tin nhắn 2 phía trong vòng 30 phút sau khi gửi. Logic và ghi dữ liệu nằm ở Java."""
+    try:
+        resp = await request.app.state.stub.RevokeMessage(
+            chat_pb2.RevokeMessageRequest(user_id=user_id, room_id=room_id, message_id=message_id),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
 
-    msg = mongo_db["messages"].find_one({"_id": message_id, "room_id": room_id})
-    if not msg:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn cần thu hồi.")
-
-    if msg.get("sender_id") != user_id:
-        raise HTTPException(status_code=403, detail="Bạn chỉ có thể thu hồi tin nhắn do chính mình gửi.")
-
-    if msg.get("is_revoked"):
+    if resp.already_revoked:
         return {"ok": True, "message_id": message_id, "message": "Tin nhắn đã được thu hồi trước đó."}
-
-    msg_time = msg.get("timestamp", 0)
-    now_ms = int(time.time() * 1000)
-    # Giới hạn 30 phút (30 * 60 * 1000 ms)
-    if (now_ms - msg_time) > 30 * 60 * 1000:
-        raise HTTPException(
-            status_code=400,
-            detail="Đã quá 30 phút kể từ lúc gửi. Không thể thu hồi tin nhắn này nữa."
-        )
-
-    revoked_text = "Tin nhắn đã được thu hồi"
-    mongo_db["messages"].update_one(
-        {"_id": message_id},
-        {"$set": {"content": revoked_text, "is_revoked": True, "revoked_at": now_ms}}
-    )
-
-    # Cập nhật last_message của room nếu đây là tin nhắn cuối cùng
-    room = mongo_db["rooms"].find_one({"_id": room_id})
-    if room and room.get("last_message_timestamp") == msg_time:
-        mongo_db["rooms"].update_one(
-            {"_id": room_id},
-            {"$set": {"last_message_content": revoked_text}}
-        )
-
-    # Phát tín hiệu realtime qua WebSocket tới toàn bộ thành viên trong phòng
-    asyncio.create_task(broadcast_ws_event({
-        "type": "MESSAGE_REVOKED",
-        "room_id": room_id,
-        "message_id": message_id,
-        "content": revoked_text,
-        "sender_id": user_id,
-        "timestamp": now_ms,
-    }))
-
-    return {"ok": True, "message_id": message_id, "content": revoked_text}
+    return {"ok": True, "message_id": message_id, "content": resp.content}
 
 
 @app.post("/api/v1/rooms/{room_id}/messages/{message_id}/react")
@@ -1060,52 +1125,18 @@ async def react_message(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Thả cảm xúc cho tin nhắn (👍, ❤️, 😂, 😮, 😢, 😡)"""
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+    """Thả hoặc gỡ cảm xúc cho tin nhắn. Gửi lại cùng emoji là gỡ."""
+    try:
+        resp = await request.app.state.stub.ReactMessage(
+            chat_pb2.ReactMessageRequest(
+                user_id=user_id, room_id=room_id, message_id=message_id, emoji=body.emoji.strip()
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
 
-    msg = mongo_db["messages"].find_one({"_id": message_id, "room_id": room_id})
-    if not msg:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn.")
-
-    reactions = msg.get("reactions") or {}
-    emoji = body.emoji.strip()
-
-    # Toggle reaction
-    current_users = reactions.get(emoji, [])
-    if user_id in current_users:
-        current_users.remove(user_id)
-        if not current_users:
-            reactions.pop(emoji, None)
-        else:
-            reactions[emoji] = current_users
-    else:
-        # Gỡ user khỏi các emoji khác (mỗi user thả 1 cảm xúc chính)
-        for k in list(reactions.keys()):
-            if user_id in reactions[k]:
-                reactions[k].remove(user_id)
-                if not reactions[k]:
-                    reactions.pop(k, None)
-        if emoji not in reactions:
-            reactions[emoji] = []
-        reactions[emoji].append(user_id)
-
-    mongo_db["messages"].update_one(
-        {"_id": message_id},
-        {"$set": {"reactions": reactions}}
-    )
-
-    # Phát tín hiệu realtime qua WebSocket
-    asyncio.create_task(broadcast_ws_event({
-        "type": "MESSAGE_REACTION",
-        "room_id": room_id,
-        "message_id": message_id,
-        "reactions": reactions,
-        "user_id": user_id,
-        "emoji": emoji,
-    }))
-
-    return {"ok": True, "message_id": message_id, "reactions": reactions}
+    return {"ok": True, "message_id": message_id, "reactions": reactions_to_dict(resp.reactions)}
 
 
 @app.put("/api/v1/rooms/{room_id}/messages/{message_id}")
@@ -1116,62 +1147,23 @@ async def edit_message(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Chỉnh sửa tin nhắn đã gửi trong vòng 30 phút."""
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
-
-    msg = mongo_db["messages"].find_one({"_id": message_id, "room_id": room_id})
-    if not msg:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn cần chỉnh sửa.")
-
-    if msg.get("sender_id") != user_id:
-        raise HTTPException(status_code=403, detail="Bạn chỉ có thể chỉnh sửa tin nhắn do chính mình gửi.")
-
-    if msg.get("is_revoked"):
-        raise HTTPException(status_code=400, detail="Không thể chỉnh sửa tin nhắn đã thu hồi.")
-
-    if msg.get("type") and msg.get("type") not in ("TEXT", "text"):
-        raise HTTPException(status_code=400, detail="Chỉ có thể chỉnh sửa tin nhắn văn bản.")
-
-    msg_time = msg.get("timestamp", 0)
-    now_ms = int(time.time() * 1000)
-    if (now_ms - msg_time) > 30 * 60 * 1000:
-        raise HTTPException(
-            status_code=400,
-            detail="Đã quá 30 phút kể từ lúc gửi. Không thể chỉnh sửa tin nhắn này nữa."
+    """Chỉnh sửa tin nhắn văn bản đã gửi trong vòng 30 phút. Logic và ghi dữ liệu nằm ở Java."""
+    try:
+        resp = await request.app.state.stub.EditMessage(
+            chat_pb2.EditMessageRequest(
+                user_id=user_id, room_id=room_id, message_id=message_id, content=body.content
+            ),
+            timeout=GRPC_TIMEOUT,
         )
-
-    new_content = body.content.strip()
-    if not new_content:
-        raise HTTPException(status_code=400, detail="Nội dung tin nhắn không được để trống.")
-
-    mongo_db["messages"].update_one(
-        {"_id": message_id},
-        {"$set": {"content": new_content, "is_edited": True, "edited_at": now_ms}}
-    )
-
-    room = mongo_db["rooms"].find_one({"_id": room_id})
-    if room and room.get("last_message_timestamp") == msg_time:
-        mongo_db["rooms"].update_one(
-            {"_id": room_id},
-            {"$set": {"last_message_content": new_content}}
-        )
-
-    asyncio.create_task(broadcast_ws_event({
-        "type": "MESSAGE_EDITED",
-        "room_id": room_id,
-        "message_id": message_id,
-        "content": new_content,
-        "is_edited": True,
-        "edited_at": now_ms,
-    }))
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
 
     return {
         "ok": True,
         "message_id": message_id,
-        "content": new_content,
+        "content": resp.content,
         "is_edited": True,
-        "edited_at": now_ms,
+        "edited_at": resp.edited_at,
     }
 
 
@@ -1182,81 +1174,29 @@ async def create_poll(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Tạo cuộc bình chọn mới trong phòng chat."""
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
-
-    cleaned_options = [opt.strip() for opt in body.options if opt and opt.strip()]
-    if len(cleaned_options) < 2:
-        raise HTTPException(status_code=400, detail="Cuộc bình chọn cần ít nhất 2 lựa chọn.")
-    if len(cleaned_options) > 10:
-        raise HTTPException(status_code=400, detail="Tối đa 10 lựa chọn cho một cuộc bình chọn.")
-
-    sender = mongo_db["users"].find_one({"_id": user_id})
-    sender_name = sender.get("display_name", "Thành viên") if sender else "Thành viên"
-
-    now_ms = int(time.time() * 1000)
-    poll_id = f"poll_{uuid.uuid4().hex[:12]}"
-    msg_id = f"msg_{uuid.uuid4().hex[:16]}"
-    poll_content = f"📊 [Bình chọn] {body.question.strip()}"
-
-    # Gửi qua gRPC backend để ghi nhận vào lịch sử phòng chat
-    grpc_request = chat_pb2.ChatMessage(
-        message_id=msg_id,
-        room_id=room_id,
-        sender_id=user_id,
-        content=poll_content,
-        timestamp=now_ms,
-        type=chat_pb2.MESSAGE_TYPE_TEXT,
-    )
+    """Tạo cuộc bình chọn mới trong phòng chat. Java ghi poll và tin nhắn cùng lúc."""
     try:
-        await request.app.state.stub.SendMessage(grpc_request, timeout=GRPC_TIMEOUT)
+        resp = await request.app.state.stub.CreatePoll(
+            chat_pb2.CreatePollRequest(
+                user_id=user_id,
+                room_id=room_id,
+                question=body.question,
+                options=body.options,
+                is_multiple_choice=body.is_multiple_choice,
+                is_anonymous=body.is_anonymous,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
     except grpc.RpcError as e:
-        log.warning("gRPC SendMessage for poll warning: %s", e)
+        raise to_http_error(e, expose_details=True)
 
-    poll_options = [
-        {"id": f"opt_{i}", "text": opt, "voter_ids": []}
-        for i, opt in enumerate(cleaned_options)
-    ]
-    poll_doc = {
-        "_id": poll_id,
-        "room_id": room_id,
-        "message_id": msg_id,
-        "creator_id": user_id,
-        "creator_name": sender_name,
-        "question": body.question.strip(),
-        "options": poll_options,
-        "is_multiple_choice": body.is_multiple_choice,
-        "is_anonymous": body.is_anonymous,
-        "is_closed": False,
-        "created_at": now_ms,
-    }
-    mongo_db["polls"].insert_one(poll_doc)
-
-    mongo_db["messages"].update_one(
-        {"_id": msg_id},
-        {"$set": {
-            "room_id": room_id,
-            "sender_id": user_id,
-            "content": poll_content,
-            "type": "POLL",
-            "poll_id": poll_id,
-            "timestamp": now_ms,
-        }},
-        upsert=True,
-    )
-
-    formatted = format_poll_response(poll_doc)
-
-    asyncio.create_task(broadcast_ws_event({
-        "type": "POLL_CREATED",
-        "room_id": room_id,
-        "poll_id": poll_id,
-        "message_id": msg_id,
+    formatted = format_poll_response(poll_proto_to_dict(resp.poll))
+    return {
+        "ok": True,
+        "poll_id": resp.poll.poll_id,
+        "message_id": resp.poll.message_id,
         "poll": formatted,
-    }))
-
-    return {"ok": True, "poll_id": poll_id, "message_id": msg_id, "poll": formatted}
+    }
 
 
 @app.post("/api/v1/chat/polls/{poll_id}/vote")
@@ -1266,53 +1206,16 @@ async def vote_poll(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Bình chọn hoặc thay đổi bình chọn trong Poll."""
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+    """Bình chọn hoặc đổi bình chọn. Bấm lại lựa chọn đã chọn là bỏ phiếu."""
+    try:
+        resp = await request.app.state.stub.VotePoll(
+            chat_pb2.VotePollRequest(user_id=user_id, poll_id=poll_id, option_id=body.option_id),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
 
-    poll = mongo_db["polls"].find_one({"_id": poll_id})
-    if not poll:
-        raise HTTPException(status_code=404, detail="Không tìm thấy cuộc bình chọn.")
-
-    if poll.get("is_closed"):
-        raise HTTPException(status_code=400, detail="Cuộc bình chọn này đã kết thúc.")
-
-    target_opt_id = body.option_id.strip()
-    options = poll.get("options", [])
-    valid_opt_ids = {opt["id"] for opt in options}
-    if target_opt_id not in valid_opt_ids:
-        raise HTTPException(status_code=400, detail="Lựa chọn không hợp lệ.")
-
-    is_multiple = poll.get("is_multiple_choice", False)
-
-    for opt in options:
-        voters = opt.get("voter_ids", [])
-        if opt["id"] == target_opt_id:
-            if user_id in voters:
-                voters.remove(user_id)
-            else:
-                voters.append(user_id)
-        else:
-            if not is_multiple and user_id in voters:
-                voters.remove(user_id)
-        opt["voter_ids"] = voters
-
-    mongo_db["polls"].update_one(
-        {"_id": poll_id},
-        {"$set": {"options": options}}
-    )
-
-    poll["options"] = options
-    formatted = format_poll_response(poll)
-
-    asyncio.create_task(broadcast_ws_event({
-        "type": "POLL_UPDATED",
-        "room_id": poll.get("room_id"),
-        "poll_id": poll_id,
-        "poll": formatted,
-    }))
-
-    return {"ok": True, "poll": formatted}
+    return {"ok": True, "poll": format_poll_response(poll_proto_to_dict(resp.poll))}
 
 
 @app.get("/api/v1/chat/polls/{poll_id}")
@@ -1340,38 +1243,15 @@ async def pin_message(
     user_id: str = Depends(get_current_user),
 ):
     """Ghim tin nhắn quan trọng lên đầu phòng chat."""
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+    try:
+        resp = await request.app.state.stub.PinMessage(
+            chat_pb2.PinMessageRequest(user_id=user_id, room_id=room_id, message_id=body.message_id),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
 
-    msg = mongo_db["messages"].find_one({"_id": body.message_id, "room_id": room_id})
-    if not msg:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn cần ghim.")
-
-    sender = mongo_db["users"].find_one({"_id": msg.get("sender_id")})
-    sender_name = sender.get("display_name", "Thành viên") if sender else "Thành viên"
-
-    pinned_data = {
-        "id": body.message_id,
-        "content": msg.get("content", ""),
-        "sender_id": msg.get("sender_id", ""),
-        "sender_name": sender_name,
-        "timestamp": msg.get("timestamp", int(time.time() * 1000)),
-        "pinned_by": user_id,
-        "pinned_at": int(time.time() * 1000),
-    }
-
-    mongo_db["rooms"].update_one(
-        {"_id": room_id},
-        {"$set": {"pinned_message": pinned_data}}
-    )
-
-    asyncio.create_task(broadcast_ws_event({
-        "type": "ROOM_PINNED_MESSAGE",
-        "room_id": room_id,
-        "pinned_message": pinned_data,
-    }))
-
-    return {"ok": True, "room_id": room_id, "pinned_message": pinned_data}
+    return {"ok": True, "room_id": room_id, "pinned_message": pinned_proto_to_dict(resp.pinned_message)}
 
 
 @app.delete("/api/v1/rooms/{room_id}/pin")
@@ -1381,24 +1261,15 @@ async def unpin_message(
     user_id: str = Depends(get_current_user),
 ):
     """Bỏ ghim tin nhắn của phòng chat."""
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
-
-    mongo_db["rooms"].update_one(
-        {"_id": room_id},
-        {"$unset": {"pinned_message": ""}}
-    )
-
-    asyncio.create_task(broadcast_ws_event({
-        "type": "ROOM_PINNED_MESSAGE",
-        "room_id": room_id,
-        "pinned_message": None,
-    }))
+    try:
+        await request.app.state.stub.UnpinMessage(
+            chat_pb2.UnpinMessageRequest(user_id=user_id, room_id=room_id),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
 
     return {"ok": True, "room_id": room_id, "pinned_message": None}
-
-
-# ---------------------------------------------------------------- Uploads
 
 
 @app.post("/api/v1/uploads/sign")
@@ -1646,44 +1517,16 @@ async def toggle_star_message(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
-    """Đánh dấu / Lưu trữ tin nhắn quan trọng (Saved / Starred Message)."""
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Database chưa sẵn sàng")
+    """Đánh dấu / bỏ đánh dấu tin nhắn quan trọng (Saved / Starred Message)."""
+    try:
+        resp = await request.app.state.stub.ToggleStarMessage(
+            chat_pb2.ToggleStarMessageRequest(user_id=user_id, message_id=message_id),
+            timeout=GRPC_TIMEOUT,
+        )
+    except grpc.RpcError as e:
+        raise to_http_error(e, expose_details=True)
 
-    existing = mongo_db["starred_messages"].find_one({"user_id": user_id, "message_id": message_id})
-    if existing:
-        mongo_db["starred_messages"].delete_one({"_id": existing["_id"]})
-        return {"ok": True, "message_id": message_id, "starred": False}
-
-    msg = mongo_db["messages"].find_one({"_id": message_id})
-    if not msg:
-        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn cần lưu.")
-
-    sender = mongo_db["users"].find_one({"_id": msg.get("sender_id")})
-    sender_name = sender.get("display_name", "Thành viên") if sender else "Thành viên"
-
-    now_ms = int(time.time() * 1000)
-    starred_doc = {
-        "_id": f"{user_id}_{message_id}",
-        "user_id": user_id,
-        "message_id": message_id,
-        "room_id": msg.get("room_id", ""),
-        "content": msg.get("content", ""),
-        "sender_id": msg.get("sender_id", ""),
-        "sender_name": sender_name,
-        "type": msg.get("type", "TEXT"),
-        "media_url": msg.get("media_url"),
-        "file_name": msg.get("file_name"),
-        "file_size": msg.get("file_size"),
-        "timestamp": msg.get("timestamp", now_ms),
-        "starred_at": now_ms,
-    }
-    mongo_db["starred_messages"].replace_one(
-        {"_id": starred_doc["_id"]},
-        starred_doc,
-        upsert=True
-    )
-    return {"ok": True, "message_id": message_id, "starred": True}
+    return {"ok": True, "message_id": message_id, "starred": resp.starred}
 
 
 @app.get("/api/v1/chat/starred")
@@ -2214,6 +2057,10 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
         ended_by_cancel = False
         try:
             async for event in stream:
+                action_payload = translate_action_event(event)
+                if action_payload is not None:
+                    await websocket.send_json(action_payload)
+                    continue
                 event_type_name = "UNKNOWN"
                 if event.event_type == chat_pb2.EVENT_NEW_MESSAGE:
                     event_type_name = "NEW_MESSAGE"
