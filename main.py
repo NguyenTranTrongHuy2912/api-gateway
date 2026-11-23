@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 
 import chat_pb2
 import chat_pb2_grpc
-from auth import create_token, decode_token, get_current_user, revoke_user_tokens, get_current_admin, get_user_role, set_user_role, USER_ROLES_STORE, DEFAULT_ADMIN_EMAILS
+from auth import create_token, decode_token, get_current_user, revoke_user_tokens, get_current_admin, get_user_role, set_user_role, USER_ROLES_STORE
 from ai_service import generate_ai_reply, summarize_conversation, rewrite_message_text, translate_message_text
 from security_ai import sanitize_pii
 from vector_db import vector_db
@@ -288,6 +288,22 @@ class RegisterPushTokenBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     push_token: str = Field(min_length=1, max_length=200)
 
+def find_hidden_ids(user_ids, hide_admins: bool) -> set[str]:
+    """user_id cần ẩn khỏi người dùng: tài khoản bị khóa, và (nếu hide_admins) cả ADMIN."""
+    ids = list(user_ids)
+    if not ids or mongo_db is None:
+        return set()
+    conds = [{"is_active": False}]
+    if hide_admins:
+        conds.append({"role": "ADMIN"})
+    try:
+        return {
+            str(d["_id"])
+            for d in mongo_db["users"].find({"_id": {"$in": ids}, "$or": conds}, {"_id": 1})
+        }
+    except Exception as e:
+        log.warning("find_hidden_ids failed: %s", e)
+        return set()
 
 def room_to_dict(room: chat_pb2.Room) -> dict:
     d = {
@@ -405,7 +421,7 @@ async def register(request: Request, payload: RegisterBody):
             ),
             timeout=GRPC_TIMEOUT,
         )
-        role = getattr(resp, "role", None) or get_user_role(resp.user_id, account_clean)
+        role = get_user_role(resp.user_id)
         return {
             "token": create_token(resp.user_id, role=role),
             "user_id": resp.user_id,
@@ -427,7 +443,7 @@ async def login(request: Request, payload: LoginBody):
         )
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
-    role = get_user_role(resp.user_id, payload.account)
+    role = get_user_role(resp.user_id)
     return {
         "token": create_token(resp.user_id, role=role),
         "user_id": resp.user_id,
@@ -532,6 +548,14 @@ async def get_admin_users(
 
     return {"users": users_list}
 
+def end_user_sessions(target_user_id: str) -> None:
+    """Thu hồi token và đóng mọi WebSocket đang mở của user."""
+    revoke_user_tokens(target_user_id)
+    for ws in list(active_user_connections.get(target_user_id, ())):
+        try:
+            asyncio.create_task(ws.close(code=status.WS_1008_POLICY_VIOLATION))
+        except Exception:
+            pass
 
 @app.patch("/api/v1/admin/users/{target_user_id}/role")
 async def update_user_role_admin(
@@ -547,11 +571,6 @@ async def update_user_role_admin(
         )
 
     set_user_role(target_user_id, "ADMIN")
-    if mongo_db is not None:
-        mongo_db["users"].update_one(
-            {"_id": target_user_id},
-            {"$set": {"role": "ADMIN"}}
-        )
     return {
         "ok": True,
         "user_id": target_user_id,
@@ -577,13 +596,7 @@ async def update_user_status_admin(
 
     # Nếu tài khoản bị khóa, lập tức thu hồi token và cắt đứt kết nối WebSocket
     if not body.is_active:
-        revoke_user_tokens(target_user_id)
-        if target_user_id in active_user_connections:
-            for ws in list(active_user_connections[target_user_id]):
-                try:
-                    asyncio.create_task(ws.close(code=status.WS_1008_POLICY_VIOLATION))
-                except Exception:
-                    pass
+        end_user_sessions(target_user_id)
 
     return {
         "ok": True,
@@ -665,7 +678,8 @@ async def create_user_admin(
             ),
             timeout=GRPC_TIMEOUT,
         )
-        set_user_role(resp.user_id, payload.role)
+        if payload.role == "ADMIN":
+            set_user_role(resp.user_id, "ADMIN")
         return {
             "ok": True,
             "user_id": resp.user_id,
@@ -683,22 +697,27 @@ async def delete_user_admin(
     target_user_id: str,
     admin_id: str = Depends(get_current_admin),
 ):
+    """Java không có RPC xóa người dùng, và xóa thẳng khỏi Mongo sẽ để lại dữ liệu mồ côi
+    (phòng, bạn bè, tin nhắn). Nên "xóa" ở đây là khóa tài khoản (is_active=False)."""
     if target_user_id == admin_id:
         raise HTTPException(status_code=400, detail="Không thể xóa tài khoản của chính mình.")
-    if mongo_db is not None:
-        mongo_db["users"].delete_one({"_id": target_user_id})
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Cơ sở dữ liệu không khả dụng.")
 
-    # Lập tức thu hồi token và cắt WebSocket của user bị xóa
-    revoke_user_tokens(target_user_id)
-    if target_user_id in active_user_connections:
-        for ws in list(active_user_connections[target_user_id]):
-            try:
-                asyncio.create_task(ws.close(code=status.WS_1008_POLICY_VIOLATION))
-            except Exception:
-                pass
+    result = mongo_db["users"].update_one(
+        {"_id": target_user_id},
+        {"$set": {"is_active": False}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng.")
 
-    return {"ok": True, "user_id": target_user_id, "message": "Đã xóa tài khoản thành công."}
-
+    end_user_sessions(target_user_id)
+    return {
+        "ok": True,
+        "user_id": target_user_id,
+        "is_active": False,
+        "message": "Đã khóa tài khoản (không xóa dữ liệu).",
+    }
 # ------------------------------------------------------------------ Users
 
 
@@ -721,20 +740,17 @@ async def search_users(
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
 
-    requester_role = get_user_role(user_id)
+        requester_role = get_user_role(user_id)
+    hidden_ids = find_hidden_ids(
+        (u.user_id for u in resp.users), hide_admins=requester_role != "ADMIN"
+)
     filtered = []
     for u in resp.users:
         if u.user_id == user_id:
             continue
-        u_email = (u.email or "").lower().strip()
         # Bảo mật: Người dùng thông thường KHÔNG ĐƯỢC nhìn thấy tài khoản của ADMIN
-        if requester_role != "ADMIN":
-            if u_email in DEFAULT_ADMIN_EMAILS or get_user_role(u.user_id, u_email) == "ADMIN":
-                continue
-            if mongo_db is not None:
-                admin_check = mongo_db["users"].find_one({"_id": u.user_id, "role": "ADMIN"})
-                if admin_check:
-                    continue
+        if u.user_id in hidden_ids:
+            continue
         filtered.append({
             "user_id": u.user_id,
             "display_name": u.display_name,
@@ -742,7 +758,6 @@ async def search_users(
         })
 
     return {"users": filtered}
-
 
 @app.get("/api/v1/users/suggestions")
 async def get_user_suggestions(
@@ -760,13 +775,10 @@ async def get_user_suggestions(
             query = {"_id": {"$ne": user_id}, "is_active": {"$ne": False}}
             if requester_role != "ADMIN":
                 query["role"] = {"$ne": "ADMIN"}
-                query["account"] = {"$nin": list(DEFAULT_ADMIN_EMAILS)}
 
             docs = mongo_db["users"].find(query, {"password_hash": 0}).limit(limit)
             for d in docs:
                 acc = d.get("account", "")
-                if requester_role != "ADMIN" and acc.lower() in DEFAULT_ADMIN_EMAILS:
-                    continue
                 users_list.append({
                     "user_id": str(d.get("_id", "")),
                     "display_name": d.get("display_name", "") or acc.split("@")[0],
@@ -783,13 +795,12 @@ async def get_user_suggestions(
             chat_pb2.SearchUsersRequest(requester_id=user_id, query="user", limit=limit * 2),
             timeout=GRPC_TIMEOUT,
         )
+        hidden_ids = find_hidden_ids(
+            (u.user_id for u in resp.users), hide_admins=requester_role != "ADMIN"
+        )
         for u in resp.users:
-            if u.user_id == user_id:
+            if u.user_id == user_id or u.user_id in hidden_ids:
                 continue
-            u_email = (u.email or "").lower().strip()
-            if requester_role != "ADMIN":
-                if u_email in DEFAULT_ADMIN_EMAILS or get_user_role(u.user_id, u_email) == "ADMIN":
-                    continue
             users_list.append({
                 "user_id": u.user_id,
                 "display_name": u.display_name,
@@ -827,6 +838,8 @@ async def create_room(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
+    if find_hidden_ids(payload.member_ids, hide_admins=False):
+        raise HTTPException(status_code=400, detail="Có người dùng không khả dụng.")
     try:
         resp = await request.app.state.stub.CreateRoom(
             chat_pb2.CreateRoomRequest(
@@ -886,6 +899,8 @@ async def add_room_members(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
+    if find_hidden_ids(payload.member_ids, hide_admins=False):
+        raise HTTPException(status_code=400, detail="Có người dùng không khả dụng.")
     try:
         resp = await request.app.state.stub.AddRoomMembers(
             chat_pb2.AddRoomMembersRequest(
@@ -1315,103 +1330,60 @@ async def sign_upload(
     }
 
 
+AI_BOT_ID = "hq_ai_bot"  # phải trùng Ids.AI_BOT bên Java
+
+
 async def handle_in_room_ai_mention(room_id: str, prompt: str, user_id: str, stub):
-    """
-    Xử lý triệu hồi @HQ AI trực tiếp trong phòng chat nhóm / chat 1-1.
-    Tự động phân tích câu hỏi và gửi câu trả lời của HQ AI vào phòng cho cả nhóm cùng xem.
-    Hoàn toàn không chặn Event Loop, ghi trực tiếp DB và phát WebSocket tức thời.
-    """
+    """Bot trả lời qua Java SendMessage; Java lưu, cập nhật last_message và phát realtime."""
     try:
-        await asyncio.sleep(0.3)  # Đợi 300ms để tin nhắn của người dùng hiện trước
+        await asyncio.sleep(0.3)  # để tin của người dùng hiện trước
         clean_q = re.sub(r"(?i)@(hq\s*ai|hqai|ai|hq)[\s:,]?", "", prompt).strip()
         if not clean_q:
             clean_q = "Chào HQ AI"
 
         q_norm = normalize_vn(clean_q)
-        if any(k in q_norm for k in ["tom tat", "tóm tắt", "tong hop", "tổng hợp"]):
-            msgs = []
-            if mongo_db is not None:
-                docs = list(mongo_db["messages"].find({"room_id": room_id}).sort("timestamp", -1).limit(30))
-                docs.reverse()
+        if any(k in q_norm for k in ["tom tat", "tong hop"]):
+            try:
+                hist = await stub.GetMessageHistory(
+                    chat_pb2.HistoryRequest(
+                        room_id=room_id, limit=30, before_timestamp=0, user_id=user_id
+                    ),
+                    timeout=GRPC_TIMEOUT,
+                )
                 msgs = [
                     {
-                        "sender_id": d.get("sender_id"),
-                        "sender_name": "Bạn" if d.get("sender_id") == user_id else ("HQ AI" if d.get("sender_id") == "hq_ai_bot" else "Thành viên"),
-                        "content": d.get("content", ""),
-                        "timestamp": d.get("timestamp", 0),
+                        "sender_id": m.sender_id,
+                        "sender_name": "Bạn" if m.sender_id == user_id
+                        else ("HQ AI" if m.sender_id == AI_BOT_ID else "Thành viên"),
+                        "content": m.content,
+                        "timestamp": m.timestamp,
                     }
-                    for d in docs
-                    if d.get("content") and not str(d.get("content")).startswith("🤖 [HQ AI]")
+                    for m in reversed(hist.messages)  # Java trả mới nhất trước
+                    if m.content and not m.content.startswith("🤖 [HQ AI]")
                 ]
-            else:
-                try:
-                    hist_resp = await stub.GetMessageHistory(
-                        chat_pb2.HistoryRequest(room_id=room_id, limit=25, before_timestamp=0, user_id=user_id),
-                        timeout=3.0,
-                    )
-                    msgs = [
-                        {
-                            "sender_id": m.sender_id,
-                            "sender_name": "Bạn" if m.sender_id == user_id else "Thành viên",
-                            "content": m.content,
-                            "timestamp": m.timestamp,
-                        }
-                        for m in reversed(hist_resp.messages)
-                        if m.content and not m.content.startswith("🤖 [HQ AI]")
-                    ]
-                except Exception:
-                    msgs = []
+            except grpc.RpcError:
+                msgs = []
             reply_text = await asyncio.to_thread(summarize_conversation, "Phòng chat", msgs)
         else:
             reply_text = await asyncio.to_thread(generate_ai_reply, clean_q)
 
-        now_ms = int(time.time() * 1000)
-        bot_msg_id = str(uuid.uuid4())
         full_content = f"🤖 [HQ AI]: {reply_text}"
-
-        if mongo_db is not None:
-            # 1. Đảm bảo bot account tồn tại trong DB
-            mongo_db["users"].update_one(
-                {"_id": "hq_ai_bot"},
-                {"$setOnInsert": {
-                    "account": "hq.ai.bot@chatapp.system",
-                    "display_name": "HQ AI 🤖",
-                    "avatar_url": "https://api.dicebear.com/7.x/bottts/png?seed=HQAI",
-                    "role": "USER",
-                    "is_active": True,
-                    "created_at": now_ms,
-                }},
-                upsert=True
-            )
-            # 2. Đảm bảo bot có trong thành viên phòng
-            mongo_db["rooms"].update_one(
-                {"_id": room_id},
-                {"$addToSet": {"member_ids": "hq_ai_bot"}}
-            )
-            # 3. Lưu tin nhắn trực tiếp vào DB
-            mongo_db["messages"].insert_one({
-                "_id": bot_msg_id,
-                "room_id": room_id,
-                "sender_id": "hq_ai_bot",
-                "content": full_content,
-                "timestamp": now_ms,
-                "type": "TEXT",
-            })
-            # 4. Cập nhật last_message cho phòng
-            mongo_db["rooms"].update_one(
-                {"_id": room_id},
-                {"$set": {
-                    "last_message": {
-                        "content": full_content,
-                        "sender_id": "hq_ai_bot",
-                        "timestamp": now_ms,
-                    },
-                    "last_message_at": now_ms,
-                }}
-            )
-
-        # 5. Phát WebSocket tức thì
-        await notify_new_message(room_id, "hq_ai_bot", full_content, "TEXT", stub)
+        await stub.SendMessage(
+            chat_pb2.ChatMessage(
+                message_id=str(uuid.uuid4()),
+                room_id=room_id,
+                sender_id=AI_BOT_ID,
+                content=full_content,
+                timestamp=int(time.time() * 1000),
+                type=chat_pb2.MESSAGE_TYPE_TEXT,
+            ),
+            timeout=GRPC_TIMEOUT,
+        )
+        # Java đã phát EVENT_NEW_MESSAGE; ở đây chỉ còn push Expo
+        await notify_new_message(room_id, AI_BOT_ID, full_content, "TEXT", stub,
+                                 lookup_user_id=user_id)
+    except grpc.RpcError as e:
+        log.warning("AI bot SendMessage failed: %s - %s", e.code(), e.details())
     except Exception as e:
         log.warning("handle_in_room_ai_mention failed: %s", e)
 
@@ -1935,9 +1907,12 @@ async def send_expo_push(target_user_ids: list[str], title: str, body: str, data
         log.warning("Failed to send Expo push notification: %s", e)
 
 
-async def notify_new_message(room_id: str, sender_id: str, content: str, msg_type: str, stub):
+async def notify_new_message(room_id, sender_id, content, msg_type, stub, lookup_user_id=None):
     try:
-        rooms_resp = await stub.ListRooms(chat_pb2.ListRoomsRequest(user_id=sender_id), timeout=GRPC_TIMEOUT)
+        rooms_resp = await stub.ListRooms(
+            chat_pb2.ListRoomsRequest(user_id=lookup_user_id or sender_id),
+            timeout=GRPC_TIMEOUT,
+        )
         room = next((r for r in rooms_resp.rooms if r.room_id == room_id), None)
         if not room:
             return
@@ -2201,22 +2176,16 @@ async def send_friend_request(
     user_id: str = Depends(get_current_user),
 ):
     # Bảo mật: Người dùng thường không thể gửi kết bạn đến tài khoản ADMIN
-    requester_role = get_user_role(user_id)
-    if requester_role != "ADMIN":
-        target_role = get_user_role(payload.receiver_id)
-        if target_role == "ADMIN":
-            raise HTTPException(
-                status_code=403,
-                detail="Không thể gửi yêu cầu kết bạn đến tài khoản Quản trị viên hệ thống."
-            )
-        if mongo_db is not None:
-            target_doc = mongo_db["users"].find_one({"_id": payload.receiver_id})
-            if target_doc:
-                if target_doc.get("role") == "ADMIN" or target_doc.get("account", "").lower() in DEFAULT_ADMIN_EMAILS:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="Không thể gửi yêu cầu kết bạn đến tài khoản Quản trị viên hệ thống."
-                    )
+    if get_user_role(user_id) != "ADMIN" and get_user_role(payload.receiver_id) == "ADMIN":
+        raise HTTPException(
+            status_code=403,
+            detail="Không thể gửi yêu cầu kết bạn đến tài khoản Quản trị viên hệ thống."
+        )
+    if mongo_db is not None:
+        target = mongo_db["users"].find_one({"_id": payload.receiver_id}, {"is_active": 1})
+        # Trả cùng một thông báo để không lộ tài khoản nào đang bị khóa
+        if target is None or target.get("is_active") is False:
+            raise HTTPException(status_code=404, detail="Không tìm thấy người dùng.")
     try:
         resp = await request.app.state.stub.SendFriendRequest(
             chat_pb2.SendFriendRequestReq(sender_id=user_id, receiver_id=payload.receiver_id),
@@ -2275,6 +2244,7 @@ async def list_friends(
         )
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
+    hidden = find_hidden_ids((f.user_id for f in resp.friends), hide_admins=False)
     return {
         "friends": [
             {
@@ -2284,6 +2254,7 @@ async def list_friends(
                 "avatar_url": f.avatar_url,
             }
             for f in resp.friends
+            if f.user_id not in hidden
         ]
     }
 
