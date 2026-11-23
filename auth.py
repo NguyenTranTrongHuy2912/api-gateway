@@ -18,13 +18,6 @@ if not JWT_SECRET:
 # Bộ nhớ lưu mốc thời gian thu hồi token khi đổi mật khẩu: user_id -> timestamp (giây)
 REVOCATION_TIMESTAMPS: dict[str, int] = {}
 
-# Danh sách email Quản trị viên được đọc an toàn từ biến môi trường ADMIN_EMAILS (tránh lộ email cá nhân lên Git)
-# Cấu hình trong .env: ADMIN_EMAILS="admin@chatapp.com,admin@iuh.edu.vn"
-_env_admin_emails = os.getenv("ADMIN_EMAILS", "")
-DEFAULT_ADMIN_EMAILS = set(
-    e.strip().lower() for e in _env_admin_emails.split(",") if e.strip()
-)
-
 # Cache in-memory để tăng tốc đọc: user_id -> "ADMIN" | "USER"
 USER_ROLES_STORE: dict[str, str] = {}
 
@@ -56,40 +49,21 @@ def set_user_role(user_id: str, role: str) -> None:
             pass
 
 
-def get_user_role(user_id: str, account_email: str = "") -> str:
-    """
-    Lấy role của người dùng.
-    Ưu tiên: Cache RAM -> Database MongoDB Atlas -> DEFAULT_ADMIN_EMAILS -> Default USER.
-    """
-    # 1. Kiểm tra cache RAM
+def get_user_role(user_id: str) -> str:
+    """Role do Java quyết định lúc đăng ký (ADMIN_EMAILS) và lưu trong users.role.
+    Thứ tự: cache RAM -> MongoDB -> mặc định USER (mặc định không được cache)."""
     if user_id in USER_ROLES_STORE:
         return USER_ROLES_STORE[user_id]
 
-    clean_email = account_email.lower().strip() if account_email else ""
-
-    # 2. Kiểm tra trực tiếp từ MongoDB Atlas
     if _auth_mongo_db is not None and user_id:
         try:
-            user_doc = _auth_mongo_db["users"].find_one({"_id": user_id}, {"role": 1, "account": 1})
-            if user_doc:
-                db_role = user_doc.get("role")
-                db_account = (user_doc.get("account") or "").lower().strip()
-                if not clean_email and db_account:
-                    clean_email = db_account
-
-                if db_role in ("ADMIN", "USER"):
-                    USER_ROLES_STORE[user_id] = db_role
-                    return db_role
+            doc = _auth_mongo_db["users"].find_one({"_id": user_id}, {"role": 1})
+            if doc and doc.get("role") in ("ADMIN", "USER"):
+                USER_ROLES_STORE[user_id] = doc["role"]
+                return doc["role"]
         except Exception:
             pass
 
-    # 3. Kiểm tra danh sách Admin mặc định
-    if clean_email and clean_email in DEFAULT_ADMIN_EMAILS:
-        USER_ROLES_STORE[user_id] = "ADMIN"
-        return "ADMIN"
-
-    # Mặc định là USER thông thường
-    USER_ROLES_STORE[user_id] = "USER"
     return "USER"
 
 
