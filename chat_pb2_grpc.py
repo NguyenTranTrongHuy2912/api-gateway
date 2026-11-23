@@ -1046,6 +1046,31 @@ class AuthServiceStub:
                 request_serializer=chat__pb2.ChangePasswordLoggedInRequest.SerializeToString,
                 response_deserializer=chat__pb2.ChangePasswordLoggedInResponse.FromString,
                 _registered_method=True)
+        self.GetUserStatus = channel.unary_unary(
+                '/chat.AuthService/GetUserStatus',
+                request_serializer=chat__pb2.GetUserStatusRequest.SerializeToString,
+                response_deserializer=chat__pb2.GetUserStatusResponse.FromString,
+                _registered_method=True)
+        self.SetUserRole = channel.unary_unary(
+                '/chat.AuthService/SetUserRole',
+                request_serializer=chat__pb2.SetUserRoleRequest.SerializeToString,
+                response_deserializer=chat__pb2.SetUserRoleResponse.FromString,
+                _registered_method=True)
+        self.GetSystemStats = channel.unary_unary(
+                '/chat.AuthService/GetSystemStats',
+                request_serializer=chat__pb2.GetSystemStatsRequest.SerializeToString,
+                response_deserializer=chat__pb2.GetSystemStatsResponse.FromString,
+                _registered_method=True)
+        self.SetUserActive = channel.unary_unary(
+                '/chat.AuthService/SetUserActive',
+                request_serializer=chat__pb2.SetUserActiveRequest.SerializeToString,
+                response_deserializer=chat__pb2.SetUserActiveResponse.FromString,
+                _registered_method=True)
+        self.DeleteUser = channel.unary_unary(
+                '/chat.AuthService/DeleteUser',
+                request_serializer=chat__pb2.DeleteUserRequest.SerializeToString,
+                response_deserializer=chat__pb2.DeleteUserResponse.FromString,
+                _registered_method=True)
 
 
 class AuthServiceServicer:
@@ -1090,6 +1115,37 @@ class AuthServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def GetUserStatus(self, request, context):
+        """--- Quản trị & Đồng bộ trạng thái (Java chịu trách nhiệm chính) ---
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetUserRole(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetSystemStats(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetUserActive(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteUser(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AuthServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -1122,6 +1178,31 @@ def add_AuthServiceServicer_to_server(servicer, server):
                     servicer.ChangePasswordLoggedIn,
                     request_deserializer=chat__pb2.ChangePasswordLoggedInRequest.FromString,
                     response_serializer=chat__pb2.ChangePasswordLoggedInResponse.SerializeToString,
+            ),
+            'GetUserStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetUserStatus,
+                    request_deserializer=chat__pb2.GetUserStatusRequest.FromString,
+                    response_serializer=chat__pb2.GetUserStatusResponse.SerializeToString,
+            ),
+            'SetUserRole': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetUserRole,
+                    request_deserializer=chat__pb2.SetUserRoleRequest.FromString,
+                    response_serializer=chat__pb2.SetUserRoleResponse.SerializeToString,
+            ),
+            'GetSystemStats': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetSystemStats,
+                    request_deserializer=chat__pb2.GetSystemStatsRequest.FromString,
+                    response_serializer=chat__pb2.GetSystemStatsResponse.SerializeToString,
+            ),
+            'SetUserActive': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetUserActive,
+                    request_deserializer=chat__pb2.SetUserActiveRequest.FromString,
+                    response_serializer=chat__pb2.SetUserActiveResponse.SerializeToString,
+            ),
+            'DeleteUser': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteUser,
+                    request_deserializer=chat__pb2.DeleteUserRequest.FromString,
+                    response_serializer=chat__pb2.DeleteUserResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1288,6 +1369,141 @@ class AuthService:
             '/chat.AuthService/ChangePasswordLoggedIn',
             chat__pb2.ChangePasswordLoggedInRequest.SerializeToString,
             chat__pb2.ChangePasswordLoggedInResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetUserStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/GetUserStatus',
+            chat__pb2.GetUserStatusRequest.SerializeToString,
+            chat__pb2.GetUserStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetUserRole(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/SetUserRole',
+            chat__pb2.SetUserRoleRequest.SerializeToString,
+            chat__pb2.SetUserRoleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetSystemStats(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/GetSystemStats',
+            chat__pb2.GetSystemStatsRequest.SerializeToString,
+            chat__pb2.GetSystemStatsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetUserActive(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/SetUserActive',
+            chat__pb2.SetUserActiveRequest.SerializeToString,
+            chat__pb2.SetUserActiveResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteUser(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.AuthService/DeleteUser',
+            chat__pb2.DeleteUserRequest.SerializeToString,
+            chat__pb2.DeleteUserResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -305,15 +305,44 @@ def find_hidden_ids(user_ids, hide_admins: bool) -> set[str]:
         log.warning("find_hidden_ids failed: %s", e)
         return set()
 
+_USER_AVATARS_CACHE: dict[str, str] = {}
+
+def get_user_avatar_cached(uid: str) -> str:
+    if not uid:
+        return ""
+    if uid in _USER_AVATARS_CACHE:
+        return _USER_AVATARS_CACHE[uid]
+    if mongo_db is not None:
+        try:
+            doc = mongo_db["users"].find_one({"_id": uid}, {"avatar_url": 1})
+            if doc and doc.get("avatar_url"):
+                url = doc["avatar_url"]
+                _USER_AVATARS_CACHE[uid] = url
+                return url
+        except Exception:
+            pass
+    return ""
+
 def room_to_dict(room: chat_pb2.Room) -> dict:
+    members = []
+    direct_avatar = ""
+    for u in room.members:
+        av = getattr(u, "avatar_url", "") or get_user_avatar_cached(u.user_id)
+        members.append({
+            "user_id": u.user_id,
+            "display_name": u.display_name,
+            "avatar_url": av,
+        })
+        if av:
+            direct_avatar = av
+
     d = {
         "room_id": room.room_id,
         "type": ROOM_TYPE_TO_API.get(room.type, "UNKNOWN"),
         "name": room.name,
+        "avatar_url": direct_avatar,
         "member_ids": list(room.member_ids),
-        "members": [
-            {"user_id": u.user_id, "display_name": u.display_name} for u in room.members
-        ],
+        "members": members,
         # None when the room has no messages yet
         "last_message": (
             {
@@ -482,6 +511,7 @@ async def get_my_profile(
 
 @app.get("/api/v1/admin/stats")
 async def get_admin_stats(
+    request: Request,
     admin_id: str = Depends(get_current_admin),
 ):
     total_users = 0
@@ -490,15 +520,27 @@ async def get_admin_stats(
     total_rooms = 0
     total_messages = 0
 
-    if mongo_db is not None:
-        try:
-            total_users = mongo_db["users"].count_documents({})
-            total_admins = mongo_db["users"].count_documents({"role": "ADMIN"})
-            total_active_users = mongo_db["users"].count_documents({"is_active": True})
-            total_rooms = mongo_db["rooms"].count_documents({})
-            total_messages = mongo_db["messages"].count_documents({})
-        except Exception as e:
-            log.warning("Admin stats mongo count error: %s", e)
+    # 1. Ủy quyền trực tiếp qua Java gRPC Backend để lấy thống kê tập trung
+    try:
+        resp = await request.app.state.auth_stub.GetSystemStats(
+            chat_pb2.GetSystemStatsRequest(), timeout=GRPC_TIMEOUT
+        )
+        total_users = resp.total_users
+        total_admins = resp.total_admins
+        total_active_users = resp.total_active_users
+        total_rooms = resp.total_rooms
+        total_messages = resp.total_messages
+    except Exception as e:
+        log.warning("GetSystemStats gRPC call failed, fallback to mongo: %s", e)
+        if mongo_db is not None:
+            try:
+                total_users = mongo_db["users"].count_documents({})
+                total_admins = mongo_db["users"].count_documents({"role": "ADMIN"})
+                total_active_users = mongo_db["users"].count_documents({"is_active": True})
+                total_rooms = mongo_db["rooms"].count_documents({})
+                total_messages = mongo_db["messages"].count_documents({})
+            except Exception as me:
+                log.warning("Admin stats mongo count error: %s", me)
 
     return {
         "database": "MongoDB Atlas Cloud",
@@ -583,16 +625,25 @@ async def update_user_role_admin(
 async def update_user_status_admin(
     target_user_id: str,
     body: SetUserStatusBody,
+    request: Request,
     admin_id: str = Depends(get_current_admin),
 ):
     if target_user_id == admin_id and not body.is_active:
         raise HTTPException(status_code=400, detail="Không thể tự khóa tài khoản của chính mình.")
 
-    if mongo_db is not None:
-        mongo_db["users"].update_one(
-            {"_id": target_user_id},
-            {"$set": {"is_active": body.is_active}}
+    # 1. Ủy quyền qua Java gRPC Backend
+    try:
+        await request.app.state.auth_stub.SetUserActive(
+            chat_pb2.SetUserActiveRequest(user_id=target_user_id, is_active=body.is_active),
+            timeout=GRPC_TIMEOUT,
         )
+    except Exception as e:
+        log.warning("SetUserActive gRPC call failed, fallback to mongo: %s", e)
+        if mongo_db is not None:
+            mongo_db["users"].update_one(
+                {"_id": target_user_id},
+                {"$set": {"is_active": body.is_active}}
+            )
 
     # Nếu tài khoản bị khóa, lập tức thu hồi token và cắt đứt kết nối WebSocket
     if not body.is_active:
@@ -695,28 +746,32 @@ async def create_user_admin(
 @app.delete("/api/v1/admin/users/{target_user_id}")
 async def delete_user_admin(
     target_user_id: str,
+    request: Request,
     admin_id: str = Depends(get_current_admin),
 ):
-    """Java không có RPC xóa người dùng, và xóa thẳng khỏi Mongo sẽ để lại dữ liệu mồ côi
-    (phòng, bạn bè, tin nhắn). Nên "xóa" ở đây là khóa tài khoản (is_active=False)."""
+    """Ủy quyền qua Java Backend để vô hiệu hóa tài khoản, tránh xóa cứng để lại dữ liệu mồ côi."""
     if target_user_id == admin_id:
         raise HTTPException(status_code=400, detail="Không thể xóa tài khoản của chính mình.")
-    if mongo_db is None:
-        raise HTTPException(status_code=503, detail="Cơ sở dữ liệu không khả dụng.")
 
-    result = mongo_db["users"].update_one(
-        {"_id": target_user_id},
-        {"$set": {"is_active": False}},
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng.")
+    try:
+        await request.app.state.auth_stub.SetUserActive(
+            chat_pb2.SetUserActiveRequest(user_id=target_user_id, is_active=False),
+            timeout=GRPC_TIMEOUT,
+        )
+    except Exception as e:
+        log.warning("SetUserActive gRPC call failed on delete, fallback to mongo: %s", e)
+        if mongo_db is not None:
+            mongo_db["users"].update_one(
+                {"_id": target_user_id},
+                {"$set": {"is_active": False}},
+            )
 
     end_user_sessions(target_user_id)
     return {
         "ok": True,
         "user_id": target_user_id,
         "is_active": False,
-        "message": "Đã khóa tài khoản (không xóa dữ liệu).",
+        "message": "Đã khóa tài khoản an toàn qua hệ thống.",
     }
 # ------------------------------------------------------------------ Users
 
@@ -2065,31 +2120,37 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
                         "media_height": event.message.media_height,
                         "media_duration_ms": event.message.media_duration_ms,
                     }
-                    if mongo_db is not None:
+                    # Đọc trực tiếp từ gRPC Event (Zero DB Query), loại bỏ triệt để nút thắt cổ chai N+1
+                    if getattr(event.message, "reply_to", None):
+                        msg_obj["reply_to"] = event.message.reply_to
+                    if getattr(event.message, "file_name", None):
+                        msg_obj["file_name"] = event.message.file_name
+                        msg_obj["file_size"] = getattr(event.message, "file_size", 0)
+                    if getattr(event.message, "poll_id", None):
+                        msg_obj["poll_id"] = event.message.poll_id
+                    if getattr(event.message, "is_forwarded", False):
+                        msg_obj["is_forwarded"] = True
+                    if getattr(event.message, "is_edited", False):
+                        msg_obj["is_edited"] = True
+                        msg_obj["edited_at"] = getattr(event.message, "edited_at", 0)
+
+                    # Chỉ dự phòng MongoDB Atlas nếu tin nhắn cũ hoàn toàn thiếu metadata
+                    if not msg_obj.get("reply_to") and not msg_obj.get("file_name") and mongo_db is not None:
                         try:
                             extra_doc = mongo_db["messages"].find_one(
                                 {"_id": event.message.message_id},
-                                {"content": 1, "reply_to": 1, "type": 1, "file_name": 1, "file_size": 1, "media_url": 1, "is_forwarded": 1, "is_edited": 1, "edited_at": 1, "poll_id": 1}
+                                {"reply_to": 1, "file_name": 1, "file_size": 1, "poll_id": 1, "is_forwarded": 1}
                             )
                             if extra_doc:
-                                if extra_doc.get("content"):
-                                    msg_obj["content"] = extra_doc["content"]
                                 if extra_doc.get("reply_to"):
                                     msg_obj["reply_to"] = extra_doc["reply_to"]
-                                if extra_doc.get("type"):
-                                    msg_obj["type"] = extra_doc["type"]
                                 if extra_doc.get("file_name"):
                                     msg_obj["file_name"] = extra_doc["file_name"]
                                     msg_obj["file_size"] = extra_doc.get("file_size", 0)
-                                if extra_doc.get("media_url"):
-                                    msg_obj["media_url"] = extra_doc["media_url"]
-                                if extra_doc.get("is_forwarded"):
-                                    msg_obj["is_forwarded"] = True
-                                if extra_doc.get("is_edited"):
-                                    msg_obj["is_edited"] = True
-                                    msg_obj["edited_at"] = extra_doc.get("edited_at")
                                 if extra_doc.get("poll_id"):
                                     msg_obj["poll_id"] = extra_doc["poll_id"]
+                                if extra_doc.get("is_forwarded"):
+                                    msg_obj["is_forwarded"] = True
                         except Exception:
                             pass
                     payload["message"] = msg_obj

@@ -57,6 +57,13 @@ message ChatMessage {
   int32 media_width = 8;
   int32 media_height = 9;
   int64 media_duration_ms = 10;  // dành cho VIDEO
+  string reply_to = 11;
+  string file_name = 12;
+  int64 file_size = 13;
+  string poll_id = 14;
+  bool is_forwarded = 15;
+  bool is_edited = 16;
+  int64 edited_at = 17;
 }
 
 message ChatResponse {
@@ -416,6 +423,13 @@ service AuthService {
   // --- Tab Cá nhân ---
   rpc UpdateProfile (UpdateProfileRequest) returns (UpdateProfileResponse);
   rpc ChangePasswordLoggedIn (ChangePasswordLoggedInRequest) returns (ChangePasswordLoggedInResponse);
+
+  // --- Quản trị & Đồng bộ trạng thái (Java chịu trách nhiệm chính) ---
+  rpc GetUserStatus (GetUserStatusRequest) returns (GetUserStatusResponse);
+  rpc SetUserRole (SetUserRoleRequest) returns (SetUserRoleResponse);
+  rpc GetSystemStats (GetSystemStatsRequest) returns (GetSystemStatsResponse);
+  rpc SetUserActive (SetUserActiveRequest) returns (SetUserActiveResponse);
+  rpc DeleteUser (DeleteUserRequest) returns (DeleteUserResponse);
 }
 
 enum OtpPurpose {
@@ -449,6 +463,7 @@ message AuthResponse {
   string user_id = 1;
   string display_name = 2;
   string avatar_url = 3;
+  string role = 4;
 }
 
 message ResetPasswordRequest {
@@ -481,4 +496,56 @@ message ChangePasswordLoggedInRequest {
 message ChangePasswordLoggedInResponse {
   bool is_success = 1;
   string status_message = 2;
+}
+
+message GetUserStatusRequest {
+  string user_id = 1;
+}
+
+message GetUserStatusResponse {
+  string user_id = 1;
+  string role = 2;
+  bool is_active = 3;
+  int64 password_changed_at = 4;
+}
+
+message SetUserRoleRequest {
+  string user_id = 1;
+  string role = 2;
+}
+
+message SetUserRoleResponse {
+  bool is_success = 1;
+  string user_id = 2;
+  string role = 3;
+}
+
+message GetSystemStatsRequest {}
+
+message GetSystemStatsResponse {
+  int64 total_users = 1;
+  int64 total_admins = 2;
+  int64 total_active_users = 3;
+  int64 total_rooms = 4;
+  int64 total_messages = 5;
+}
+
+message SetUserActiveRequest {
+  string user_id = 1;
+  bool is_active = 2;
+}
+
+message SetUserActiveResponse {
+  bool is_success = 1;
+  string user_id = 2;
+  bool is_active = 3;
+}
+
+message DeleteUserRequest {
+  string user_id = 1;
+}
+
+message DeleteUserResponse {
+  bool is_success = 1;
+  string user_id = 2;
 }
