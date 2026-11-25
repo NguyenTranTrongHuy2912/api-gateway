@@ -795,7 +795,7 @@ async def search_users(
     except grpc.RpcError as e:
         raise to_http_error(e, expose_details=True)
 
-        requester_role = get_user_role(user_id)
+    requester_role = get_user_role(user_id)
     hidden_ids = find_hidden_ids(
         (u.user_id for u in resp.users), hide_admins=requester_role != "ADMIN"
 )
