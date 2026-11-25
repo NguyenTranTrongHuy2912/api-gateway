@@ -851,13 +851,12 @@ async def search_users(
             timeout=GRPC_TIMEOUT,
         )
         for u in resp.users:
-            if u.user_id == user_id:
-                continue
             users_list.append({
                 "user_id": u.user_id,
                 "display_name": u.display_name,
                 "email": u.email,
                 "avatar_url": get_user_avatar_cached(u.user_id),
+                "is_self": u.user_id == user_id,
             })
     except Exception as grpc_err:
         log.warning("gRPC SearchUsers call failed or timed out: %s", grpc_err)
@@ -868,7 +867,6 @@ async def search_users(
             vn_pat = make_vn_regex(q_clean)
             reg = re.compile(vn_pat, re.I)
             query_filter = {
-                "_id": {"$ne": user_id},
                 "is_active": {"$ne": False},
                 "$or": [
                     {"account": reg},
@@ -881,21 +879,21 @@ async def search_users(
             cursor = mongo_db["users"].find(query_filter, {"password_hash": 0}).limit(limit)
             for doc in cursor:
                 uid = doc["_id"]
-                if uid == user_id:
-                    continue
                 acc = doc.get("account", "")
                 users_list.append({
                     "user_id": uid,
                     "display_name": doc.get("display_name", "") or acc.split("@")[0],
                     "email": acc,
                     "avatar_url": doc.get("avatar_url", ""),
+                    "is_self": uid == user_id,
                 })
         except Exception as mongo_err:
             log.error("Mongo search fallback error: %s", mongo_err)
 
-    # Lọc ẩn admin nếu người dùng thường
+    # Lọc ẩn admin nếu người dùng thường (ngoại trừ tài khoản của chính mình)
     hidden_ids = find_hidden_ids(
-        (u["user_id"] for u in users_list), hide_admins=requester_role != "ADMIN"
+        (u["user_id"] for u in users_list if not u.get("is_self")),
+        hide_admins=requester_role != "ADMIN"
     )
     final_users = [u for u in users_list if u["user_id"] not in hidden_ids]
 
@@ -1770,6 +1768,7 @@ active_user_connections: dict[str, set[WebSocket]] = {}
 user_last_seen: dict[str, int] = {}
 user_push_tokens: dict[str, str] = {}
 active_calls: dict[str, dict] = {}
+pending_call_offers: dict[str, str] = {}
 
 
 async def send_ws_to_user(target_user_id: str, payload: dict) -> bool:
@@ -1843,43 +1842,75 @@ async def handle_call_signal(ws: WebSocket, sender_user_id: str, data: dict, stu
 
     if msg_type == "CALL_OFFER":
         is_online = receiver_id in active_user_connections and len(active_user_connections[receiver_id]) > 0
-        if not is_online:
-            await ws.send_json({
-                "type": "CALL_UNAVAILABLE",
-                "call_id": call_id,
-                "receiver_id": receiver_id,
-                "reason": "offline",
-                "message": "Người dùng hiện không trực tuyến."
-            })
-            if room_id:
-                call_label = "📞 Cuộc gọi thoại nhỡ" if call_type == "audio" else "📹 Cuộc gọi video nhỡ"
-                await record_call_history_message(room_id, sender_user_id, f"❌ {call_label}", stub)
-            return
+        caller_name = data.get("caller_name", "Người dùng")
 
         active_calls[call_id] = {
             "caller_id": sender_user_id,
             "receiver_id": receiver_id,
             "room_id": room_id,
             "call_type": call_type,
-            "caller_name": data.get("caller_name", "Người dùng"),
+            "caller_name": caller_name,
             "caller_avatar": data.get("caller_avatar", ""),
             "status": "ringing",
             "created_at": time.time(),
             "start_time": None,
+            "sdp": data.get("sdp"),
         }
 
-        await send_ws_to_user(receiver_id, {
-            "type": "CALL_OFFER",
-            "call_id": call_id,
-            "caller_id": sender_user_id,
-            "caller_name": data.get("caller_name", "Người dùng"),
-            "caller_avatar": data.get("caller_avatar", ""),
-            "receiver_id": receiver_id,
-            "room_id": room_id,
-            "call_type": call_type,
-            "sdp": data.get("sdp"),
-            "timestamp": int(time.time() * 1000),
-        })
+        # Luôn gửi High-Priority Push Notification tới người nhận để đánh thức thiết bị
+        call_title = "📞 Cuộc gọi thoại đến" if call_type == "audio" else "📹 Cuộc gọi video đến"
+        call_body = f"{caller_name} đang gọi điện cho bạn..."
+        asyncio.create_task(send_push_notification(
+            [receiver_id],
+            title=call_title,
+            body=call_body,
+            data={
+                "type": "CALL_OFFER",
+                "call_id": call_id,
+                "caller_id": sender_user_id,
+                "caller_name": caller_name,
+                "caller_avatar": data.get("caller_avatar", ""),
+                "room_id": room_id,
+                "call_type": call_type,
+            }
+        ))
+
+        if is_online:
+            await send_ws_to_user(receiver_id, {
+                "type": "CALL_OFFER",
+                "call_id": call_id,
+                "caller_id": sender_user_id,
+                "caller_name": caller_name,
+                "caller_avatar": data.get("caller_avatar", ""),
+                "receiver_id": receiver_id,
+                "room_id": room_id,
+                "call_type": call_type,
+                "sdp": data.get("sdp"),
+                "timestamp": int(time.time() * 1000),
+            })
+        else:
+            pending_call_offers[receiver_id] = call_id
+            log.info("Receiver %s is offline. Call %s queued and push notification sent.", receiver_id, call_id)
+
+        # Lên lịch tự động timeout sau 45s nếu người nhận không mở máy hoặc không trả lời
+        async def call_timeout_checker(cid: str, s_uid: str, rec_uid: str, r_id: str, c_type: str):
+            await asyncio.sleep(45)
+            c_info = active_calls.get(cid)
+            if c_info and c_info.get("status") == "ringing":
+                active_calls.pop(cid, None)
+                if pending_call_offers.get(rec_uid) == cid:
+                    pending_call_offers.pop(rec_uid, None)
+                await send_ws_to_user(s_uid, {
+                    "type": "CALL_HANGUP",
+                    "call_id": cid,
+                    "reason": "timeout",
+                    "message": "Người nhận không trả lời."
+                })
+                if r_id:
+                    call_label = "📞 Cuộc gọi thoại nhỡ" if c_type == "audio" else "📹 Cuộc gọi video nhỡ"
+                    await record_call_history_message(r_id, s_uid, f"❌ {call_label}", stub)
+
+        asyncio.create_task(call_timeout_checker(call_id, sender_user_id, receiver_id, room_id, call_type))
 
     elif msg_type == "CALL_ANSWER":
         caller_id = data.get("caller_id")
@@ -2163,6 +2194,27 @@ async def chat_websocket(websocket: WebSocket, token: str = Query(default="")):
         })
     except Exception:
         pass
+
+    # Chuyển tiếp ngay cuộc gọi đang chờ nếu có người đang gọi lúc user offline
+    if user_id in pending_call_offers:
+        p_call_id = pending_call_offers.pop(user_id, None)
+        p_call = active_calls.get(p_call_id)
+        if p_call and p_call.get("status") == "ringing" and (time.time() - p_call.get("created_at", 0) < 45):
+            try:
+                await websocket.send_json({
+                    "type": "CALL_OFFER",
+                    "call_id": p_call_id,
+                    "caller_id": p_call["caller_id"],
+                    "caller_name": p_call["caller_name"],
+                    "caller_avatar": p_call["caller_avatar"],
+                    "receiver_id": user_id,
+                    "room_id": p_call["room_id"],
+                    "call_type": p_call["call_type"],
+                    "sdp": p_call.get("sdp"),
+                    "timestamp": int(p_call["created_at"] * 1000),
+                })
+            except Exception:
+                pass
 
     if is_first:
         asyncio.create_task(broadcast_ws_event({
