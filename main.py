@@ -288,6 +288,34 @@ class RegisterPushTokenBody(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     push_token: str = Field(min_length=1, max_length=200)
 
+FRIENDSHIP_COLLECTION = "friendships"
+FRIEND_REQUEST_COLLECTION = "friend_requests"
+
+
+def find_related_ids(user_id: str) -> set[str]:
+    """user_id đã là bạn bè hoặc đang có lời mời chờ (gửi đi lẫn nhận về) với user_id."""
+    if mongo_db is None:
+        return set()
+    related: set[str] = set()
+    try:
+        for d in mongo_db[FRIENDSHIP_COLLECTION].find({"user_id": user_id}, {"friend_id": 1}):
+            related.add(str(d.get("friend_id", "")))
+
+        for d in mongo_db[FRIEND_REQUEST_COLLECTION].find(
+            {
+                "status": "PENDING",
+                "$or": [{"sender_id": user_id}, {"receiver_id": user_id}],
+            },
+            {"sender_id": 1, "receiver_id": 1},
+        ):
+            related.add(str(d.get("sender_id", "")))
+            related.add(str(d.get("receiver_id", "")))
+    except Exception as e:
+        log.warning("find_related_ids failed: %s", e)
+    related.discard(user_id)
+    related.discard("")
+    return related
+
 def find_hidden_ids(user_ids, hide_admins: bool) -> set[str]:
     """user_id cần ẩn khỏi người dùng: tài khoản bị khóa, và (nếu hide_admins) cả ADMIN."""
     ids = list(user_ids)
@@ -823,11 +851,15 @@ async def get_user_suggestions(
     """Gợi ý bạn bè phù hợp. Tuyệt đối ẩn danh tính và tài khoản Admin khỏi người dùng thường."""
     requester_role = get_user_role(user_id)
     users_list = []
+    exclude_ids = find_related_ids(user_id)
 
     # 1. Thử lấy từ MongoDB
     if mongo_db is not None:
         try:
-            query = {"_id": {"$ne": user_id}, "is_active": {"$ne": False}}
+            query = {
+                "_id": {"$nin": [user_id, *exclude_ids]},
+                "is_active": {"$ne": False},
+            }
             if requester_role != "ADMIN":
                 query["role"] = {"$ne": "ADMIN"}
 
@@ -854,7 +886,7 @@ async def get_user_suggestions(
             (u.user_id for u in resp.users), hide_admins=requester_role != "ADMIN"
         )
         for u in resp.users:
-            if u.user_id == user_id or u.user_id in hidden_ids:
+            if u.user_id == user_id or u.user_id in hidden_ids or u.user_id in exclude_ids:
                 continue
             users_list.append({
                 "user_id": u.user_id,
