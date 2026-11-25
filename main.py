@@ -801,6 +801,32 @@ async def delete_user_admin(
         "is_active": False,
         "message": "Đã khóa tài khoản an toàn qua hệ thống.",
     }
+_VN_VOWEL_GROUPS = {
+    'a': '[aàáảãạăằắẳẵặâầấẩẫậ]',
+    'e': '[eèéẻẽẹêềếểễệ]',
+    'i': '[iìíỉĩị]',
+    'o': '[oòóỏõọôồốổỗộơờớởỡợ]',
+    'u': '[uùúủũụưừứửữự]',
+    'y': '[yỳýỷỹỵ]',
+    'd': '[dđ]'
+}
+_CHAR_TO_VN_GROUP = {}
+for _base, _pat in _VN_VOWEL_GROUPS.items():
+    for _c in _pat[1:-1]:
+        _CHAR_TO_VN_GROUP[_c] = _pat
+
+def make_vn_regex(s: str) -> str:
+    pattern = ""
+    for char in s.lower():
+        if char in _CHAR_TO_VN_GROUP:
+            pattern += _CHAR_TO_VN_GROUP[char]
+        elif char in ".^$*+?()[{\\|":
+            pattern += "\\" + char
+        else:
+            pattern += char
+    return pattern
+
+
 # ------------------------------------------------------------------ Users
 
 
@@ -815,32 +841,65 @@ async def search_users(
     if len(q_clean) < 2:
         return {"users": []}
 
+    requester_role = get_user_role(user_id)
+    users_list = []
+
+    # 1. Thử gọi Java gRPC Backend
     try:
         resp = await request.app.state.stub.SearchUsers(
-            chat_pb2.SearchUsersRequest(requester_id=user_id, query=q_clean, limit=limit),
+            chat_pb2.SearchUsersRequest(requester_id=user_id, query=q_clean, limit=limit * 2),
             timeout=GRPC_TIMEOUT,
         )
-    except grpc.RpcError as e:
-        raise to_http_error(e, expose_details=True)
+        for u in resp.users:
+            if u.user_id == user_id:
+                continue
+            users_list.append({
+                "user_id": u.user_id,
+                "display_name": u.display_name,
+                "email": u.email,
+                "avatar_url": get_user_avatar_cached(u.user_id),
+            })
+    except Exception as grpc_err:
+        log.warning("gRPC SearchUsers call failed or timed out: %s", grpc_err)
 
-    requester_role = get_user_role(user_id)
+    # 2. Nếu gRPC không có kết quả hoặc gặp lỗi, tự động fallback sang MongoDB Atlas
+    if not users_list and mongo_db is not None:
+        try:
+            vn_pat = make_vn_regex(q_clean)
+            reg = re.compile(vn_pat, re.I)
+            query_filter = {
+                "_id": {"$ne": user_id},
+                "is_active": {"$ne": False},
+                "$or": [
+                    {"account": reg},
+                    {"display_name": reg},
+                ]
+            }
+            if requester_role != "ADMIN":
+                query_filter["role"] = {"$ne": "ADMIN"}
+
+            cursor = mongo_db["users"].find(query_filter, {"password_hash": 0}).limit(limit)
+            for doc in cursor:
+                uid = doc["_id"]
+                if uid == user_id:
+                    continue
+                acc = doc.get("account", "")
+                users_list.append({
+                    "user_id": uid,
+                    "display_name": doc.get("display_name", "") or acc.split("@")[0],
+                    "email": acc,
+                    "avatar_url": doc.get("avatar_url", ""),
+                })
+        except Exception as mongo_err:
+            log.error("Mongo search fallback error: %s", mongo_err)
+
+    # Lọc ẩn admin nếu người dùng thường
     hidden_ids = find_hidden_ids(
-        (u.user_id for u in resp.users), hide_admins=requester_role != "ADMIN"
-)
-    filtered = []
-    for u in resp.users:
-        if u.user_id == user_id:
-            continue
-        # Bảo mật: Người dùng thông thường KHÔNG ĐƯỢC nhìn thấy tài khoản của ADMIN
-        if u.user_id in hidden_ids:
-            continue
-        filtered.append({
-            "user_id": u.user_id,
-            "display_name": u.display_name,
-            "email": u.email,
-        })
+        (u["user_id"] for u in users_list), hide_admins=requester_role != "ADMIN"
+    )
+    final_users = [u for u in users_list if u["user_id"] not in hidden_ids]
 
-    return {"users": filtered}
+    return {"users": final_users[:limit]}
 
 @app.get("/api/v1/users/suggestions")
 async def get_user_suggestions(
@@ -870,6 +929,7 @@ async def get_user_suggestions(
                     "user_id": str(d.get("_id", "")),
                     "display_name": d.get("display_name", "") or acc.split("@")[0],
                     "email": acc,
+                    "avatar_url": d.get("avatar_url", ""),
                 })
             if users_list:
                 return {"users": users_list}
@@ -892,6 +952,7 @@ async def get_user_suggestions(
                 "user_id": u.user_id,
                 "display_name": u.display_name,
                 "email": u.email,
+                "avatar_url": get_user_avatar_cached(u.user_id),
             })
             if len(users_list) >= limit:
                 break
